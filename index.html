@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; media-src 'self'; manifest-src 'self'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F5F1E9">
+  <meta name="description" content="School Arts and Sports Management Portal">
+  <title>School Arts &amp; Sports Portal</title>
+  <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <symbol id="icon-house" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/><path d="M9 21v-7h6v7"/></symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="icon-home-user" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9.5V21h14V9.5M9 21v-5h6v5"/><circle cx="12" cy="11" r="1.5"/></symbol>
+    <symbol id="icon-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1.1a2 2 0 0 0 1.6-3.2 1.7 1.7 0 0 1 1.35-2.8H18a3 3 0 0 0 3-3A9 9 0 0 0 12 3Z"/><circle cx="7.5" cy="10" r="1"/><circle cx="11" cy="7.5" r="1"/><circle cx="15.5" cy="8.5" r="1"/><circle cx="17" cy="12" r="1"/></symbol>
+    <symbol id="icon-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v2a4 4 0 0 0 4 4M17 6h3v2a4 4 0 0 1-4 4"/></symbol>
+    <symbol id="icon-users-round" viewBox="0 0 24 24"><path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20"/><circle cx="10" cy="8" r="3.5"/><path d="M20 20v-1.5a3.5 3.5 0 0 0-2.8-3.43M16 4.7a3.5 3.5 0 0 1 0 6.6"/></symbol>
+    <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+    <symbol id="icon-file-chart" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6"/><path d="M8 17v-3M12 17v-6M16 17v-2"/></symbol>
+    <symbol id="icon-user-x" viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a5 5 0 0 1 5-5h4M17 17l5 5M22 17l-5 5"/></symbol>
+    <symbol id="icon-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M8 14h2M14 14h2M8 17h2"/></symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m19.4 15 .1.1 1.2.9-1.5 2.6-1.4-.6a8 8 0 0 1-1.7 1l-.2 1.5h-3l-.2-1.5a8 8 0 0 1-1.7-1l-1.4.6-1.5-2.6 1.2-.9a8 8 0 0 1 0-2l-1.2-.9 1.5-2.6 1.4.6a8 8 0 0 1 1.7-1L12.9 7h3l.2 1.5a8 8 0 0 1 1.7 1l1.4-.6 1.5 2.6-1.2.9a8 8 0 0 1-.1 2Z" transform="translate(-1 -1)"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
+    <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="m18 6-12 12M6 6l12 12"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  </svg>
+  <div class="mobile-scrim" id="mobile-scrim" aria-hidden="true"></div>
+  <div class="app-shell" id="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Portal navigation">
+      <a class="brand" href="#dashboard" aria-label="Portal overview">
+        <img src="assets/mark.svg" alt="" class="brand-mark" id="school-logo">
+        <span class="brand-copy"><strong id="school-name-nav">YOUR SCHOOL</strong><small>ACTIVITY MANAGER</small></span>
+      </a>
+      <button class="icon-button sidebar-mobile-close" id="sidebar-close" type="button" aria-label="Close navigation"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button>
+      <div class="sidebar-divider"></div>
+      <div class="nav-section-label">WORKSPACE</div>
+      <nav class="main-nav" id="main-nav" aria-label="Main navigation">
+        <button class="nav-item active" data-page="dashboard" data-roles="admin,teacher,parent"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-house"></use></svg></span><span>Overview</span></button>
+        <div class="nav-section-label nav-section-spaced" data-roles="admin,teacher">STAFF WORKSPACE</div>
+        <button class="nav-item" data-page="students" data-roles="admin,teacher"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-users"></use></svg></span><span>Class register</span></button>
+        <button class="nav-item" data-page="house-assign" data-roles="teacher"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-home-user"></use></svg></span><span>House assignment</span></button>
+        <div class="nav-section-label nav-section-spaced" data-roles="admin,teacher,parent">PROGRAMMES</div>
+        <button class="nav-item" data-page="arts" data-roles="admin,teacher,parent"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-palette"></use></svg></span><span>Arts</span></button>
+        <button class="nav-item" data-page="sports" data-roles="admin,teacher,parent"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-trophy"></use></svg></span><span>Sports</span></button>
+        <button class="nav-item" data-page="groups" data-roles="admin,teacher,parent"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-users-round"></use></svg></span><span>Group Items</span></button>
+        <button class="nav-item" data-page="results" data-roles="admin,teacher,parent"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chart"></use></svg></span><span data-roles="admin,teacher">Results &amp; Sahodaya</span><span data-roles="parent">Results</span></button>
+        <div class="nav-section-label nav-section-spaced" data-roles="admin,teacher,parent">SCHOOL</div>
+        <button class="nav-item" data-page="reports" data-roles="admin,teacher"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-file-chart"></use></svg></span><span>Reports</span></button>
+        <button class="nav-item" data-page="not-registered" data-roles="admin,teacher"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user-x"></use></svg></span><span>Not registered</span></button>
+        <button class="nav-item" data-page="calendar" data-roles="admin,teacher,parent"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-calendar"></use></svg></span><span>Events</span></button>
+                <button class="nav-item" data-page="portal" data-roles="parent"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"></use></svg></span><span>My child</span></button>
+        <div class="nav-section-label nav-section-spaced" data-roles="admin">ADMINISTRATION</div>
+        <button class="nav-item" data-page="admin" data-roles="admin"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-settings"></use></svg></span><span>Administration</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-status"><i></i><span><strong>Local working copy</strong><small>Changes saved in this browser</small></span></div>
+        <div class="sidebar-user">
+          <div class="avatar" id="sidebar-avatar">AD</div>
+          <div class="sidebar-user-text"><strong id="sidebar-user-name">Portal Administrator</strong><small id="sidebar-user-role">Administrator</small></div>
+          <button class="icon-button user-menu-button" id="user-menu" title="Account options" aria-label="Account options">···</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-leading">
+          <button class="icon-button mobile-menu" id="mobile-menu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg></button>
+          <div class="breadcrumb"><span>School</span><span class="crumb-divider">/</span><strong id="breadcrumb-title">Overview</strong></div>
+        </div>
+        <div class="topbar-trailing">
+          <div class="global-search"><span class="global-search-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg></span><input id="global-search" type="search" placeholder="Search students by name or admission ID…" aria-label="Search students by name or admission ID"><kbd>↵</kbd></div>
+          <span class="year-pill" id="year-pill">2026–27</span>
+          <button class="icon-button theme-toggle" id="theme-toggle" aria-label="Switch to dark theme" title="Switch theme"><span id="theme-symbol"><svg class="ui-icon" aria-hidden="true"><use href="#icon-moon"></use></svg></span></button>
+          <label class="role-preview" id="role-preview-wrap"><span>Workspace</span><select id="role-preview" aria-label="Choose workspace role"><option value="admin">Administrator</option><option value="teacher">Teacher</option><option value="parent">Parent</option></select></label>
+          <label class="role-preview account-preview" id="preview-account-wrap"><span>Account</span><select id="preview-account" aria-label="Choose preview account"></select></label>
+          <div class="top-user"><div class="avatar avatar-small" id="top-avatar">AD</div><div class="top-user-copy"><strong id="top-user-name">Portal Administrator</strong><small id="top-user-role">Administrator</small></div></div>
+        </div>
+      </header>
+      <section class="page-content" id="page-content" aria-live="polite"></section>
+      <footer class="app-footer"><span id="footer-school">YOUR SCHOOL · ACTIVITY MANAGER</span><span>Arts · Sports · Student activities</span></footer>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modal-backdrop" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="modal-header"><div><p class="eyebrow" id="modal-kicker">RECORD</p><h2 id="modal-title">Edit record</h2></div><button class="icon-button modal-x" data-close-modal aria-label="Close dialog"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button></header>
+      <div class="modal-body" id="modal-body"></div>
+    </section>
+  </div>
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

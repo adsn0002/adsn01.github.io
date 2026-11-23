@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; media-src 'self'; manifest-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#f2f3f5">
+  <meta name="robots" content="noindex,nofollow">
+  <title>School Election · Live Results</title>
+  <link rel="stylesheet" href="poll.css">
+  <script src="poll-live.js" defer></script>
+</head>
+<body>
+  <main class="poll-shell live-shell">
+    <header class="poll-brand"><span class="poll-mark">S</span><div><strong id="school-name">School</strong><small>Election results display</small></div><span class="live-indicator" id="live-indicator">UPDATING</span></header>
+    <section class="poll-hero"><p class="eyebrow">SCHOOL ELECTION</p><h1 id="poll-title">Loading results…</h1><p id="poll-description">The school will publish the final results here.</p><div class="poll-meta" id="poll-meta"></div></section>
+    <section class="poll-panel" id="poll-panel"><div class="loading-state">Checking the results link…</div></section>
+    <footer class="poll-footer"><span>Official election display</span><span>Aggregate totals only · No voter identities are displayed</span></footer>
+  </main>
+</body>
+</html>
