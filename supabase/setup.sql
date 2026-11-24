@@ -1,16 +1,22 @@
 -- Arts & Sports Portal: temporary anonymous multi-device test storage.
--- TEST DATA ONLY. This table is publicly readable and writable through the Data API
--- so the current localStorage model can be mirrored across browsers before Auth exists.
--- Do not place real student records or production election data here.
+-- TEST DATA ONLY. Anonymous clients can read and write this table during the demo phase.
+-- Never store real student records, credentials, or production election data here.
 
 create table if not exists public.portal_storage (
   key text primary key,
   value text not null,
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint portal_storage_key_format_check
+    check (char_length(key) between 1 and 180 and key ~ '^school-arts-sports-[a-z0-9-]+$'),
+  constraint portal_storage_value_size_check
+    check (octet_length(value) <= 2000000)
 );
 
 alter table public.portal_storage enable row level security;
 
+-- Keep the unauthenticated trial surface narrow. Auth is intentionally deferred.
+revoke all privileges on table public.portal_storage from authenticated;
+revoke truncate, references, trigger on table public.portal_storage from anon;
 grant select, insert, update, delete on table public.portal_storage to anon;
 
 drop policy if exists "portal_storage_test_select_anon" on public.portal_storage;
@@ -39,6 +45,9 @@ begin
   return new;
 end;
 $$;
+
+revoke all privileges on function public.portal_storage_touch_updated_at()
+  from public, anon, authenticated;
 
 drop trigger if exists portal_storage_touch_updated_at on public.portal_storage;
 create trigger portal_storage_touch_updated_at
