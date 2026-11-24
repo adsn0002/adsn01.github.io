@@ -413,7 +413,7 @@
     };
     return {
       version: 1, nextIds: { student: 20, programme: 13, registration: 21, event: 4, user: 4, election: 2, position: 5, candidate: 9, groupTeam: 1 },
-      settings: { schoolName: 'Your School', shortName: 'YS', academicYear: '2026–27', categoryBands: defaultCategoryBands(), maxArts: 3, maxSports: 3, maxGroup: 2, maxArtsOnstage: 3, maxArtsOffstage: 3, maxSportsTrack: 2, maxSportsField: 2, registrationOpen: fmt(today), registrationClose: plus(30), sections: [...sections], classes: [...classes], classTeachers: {'7|A': 2}, houseNames: ['Emerald','Ruby','Diamond','Sapphire'], houseAssignmentVersion: 3, teacherPermissions: {}, logoDataUrl: '', backgroundDataUrl: '', dashboardEyebrow: 'ACTIVITY MANAGER', dashboardTitle: 'Every student has a place to take part.', dashboardDescription: 'Keep programme choices, event schedules and school results organised in one place. Arts and Sports stay separate; student records stay central.', dashboardQuote: 'Talent thrives when opportunity meets support.', announcements: 'Programme choice dates are now open for selected Arts and Sports programmes.', publishResults: false, publishParticipants: false },
+      settings: { schoolName: 'Benhill English School', shortName: 'BES', academicYear: '2026–27', categoryBands: defaultCategoryBands(), maxArts: 3, maxSports: 3, maxGroup: 2, maxArtsOnstage: 3, maxArtsOffstage: 3, maxSportsTrack: 2, maxSportsField: 2, registrationOpen: fmt(today), registrationClose: plus(30), sections: [...sections], classes: [...classes], classTeachers: {'7|A': 2}, houseNames: ['Emerald','Ruby','Diamond','Sapphire'], houseAssignmentVersion: 3, teacherPermissions: {}, logoDataUrl: '', backgroundDataUrl: '', dashboardEyebrow: 'BENHILL ENGLISH SCHOOL', dashboardTitle: 'Arts & Sports Manager for Benhill', dashboardDescription: 'Benhill English School’s hub for Arts programmes, Sports activities, student participation and school events.', dashboardQuote: 'Talent thrives when opportunity meets support.', announcements: 'Programme choice dates are now open for selected Arts and Sports programmes.', publishResults: false, publishParticipants: false },
       students, programmes, registrations, groupTeams: [],
       results: [{ programmeId: 6, studentId: 12, rank: 1, notes: 'School-level first place.' }, { programmeId: 9, studentId: 3, rank: 2, notes: '' }],
       selections: [{ programmeId: 6, studentId: 12, pathway: 'School competition', confirmedAt: today.toISOString().slice(0,10) }],
@@ -477,6 +477,13 @@
       if (student && typeof student === 'object' && !String(student.section || '').trim()) student.section = 'Unsectioned';
     }
     if (data.settings) {
+      // Online demo branding: update only generic starter values. Any school-specific
+      // name, description or custom logo already saved in this browser is preserved.
+      if (!String(data.settings.schoolName||'').trim() || data.settings.schoolName==='Your School') data.settings.schoolName='Benhill English School';
+      if (!String(data.settings.shortName||'').trim() || data.settings.shortName==='YS') data.settings.shortName='BES';
+      if (!data.settings.dashboardEyebrow || data.settings.dashboardEyebrow==='ACTIVITY MANAGER') data.settings.dashboardEyebrow='BENHILL ENGLISH SCHOOL';
+      if (!data.settings.dashboardTitle || data.settings.dashboardTitle==='Every student has a place to take part.') data.settings.dashboardTitle='Arts & Sports Manager for Benhill';
+      if (!data.settings.dashboardDescription || data.settings.dashboardDescription==='Keep programme choices, event schedules and school results organised in one place. Arts and Sports stay separate; student records stay central.') data.settings.dashboardDescription='Benhill English School’s hub for Arts programmes, Sports activities, student participation and school events.';
       if (!Array.isArray(data.settings.categoryBands) || !data.settings.categoryBands.length) data.settings.categoryBands = defaultCategoryBands();
       data.settings.categoryBands = data.settings.categoryBands.filter(b => b && typeof b.name === 'string' && Number.isInteger(Number(b.minClass)) && Number.isInteger(Number(b.maxClass))).map((b,i)=>({id:String(b.id||`cat${i+1}`),name:String(b.name).trim(),minClass:Number(b.minClass),maxClass:Number(b.maxClass)})).filter(b=>b.name&&b.minClass>=1&&b.maxClass<=12&&b.minClass<=b.maxClass);
       if (!data.settings.categoryBands.length) data.settings.categoryBands = defaultCategoryBands();
@@ -1049,7 +1056,7 @@
     });
     $('#global-search').parentElement.hidden = state.role==='parent';
     $('#school-name-nav').textContent = db.settings.schoolName.toUpperCase();
-    $('#footer-school').textContent = `${db.settings.schoolName.toUpperCase()} · ACTIVITY MANAGER`;
+    $('#footer-school').textContent = `${db.settings.schoolName.toUpperCase()} · ARTS & SPORTS MANAGER`;
     $('#year-pill').textContent = db.settings.academicYear;
     $('#breadcrumb-title').textContent = pageNames[state.page] || 'Overview';
   }
@@ -1201,10 +1208,10 @@
   function applyTheme(theme) { state.theme=theme==='dark'?'dark':'light'; document.documentElement.dataset.theme=state.theme; const themeMeta=document.querySelector('meta[name="theme-color"]'); if(themeMeta)themeMeta.content=state.theme==='dark'?'#111923':'#F5F1E9'; storageSet(THEME_KEY,state.theme); storageSet(THEME_DEFAULT_VERSION_KEY,'3'); $('#theme-symbol').innerHTML=uiIcon(state.theme==='dark'?'sun':'moon','ui-icon theme-symbol-icon'); $('#theme-toggle').setAttribute('aria-label',state.theme==='dark'?'Switch to light theme':'Switch to dark theme'); updateStorageStatus(); }
   function applySchoolBranding() {
     const schoolName=db.settings.schoolName||'Your School';
-    const logo=$('#school-logo'); if(logo) logo.src=db.settings.logoDataUrl||'assets/mark.svg';
+    const logo=$('#school-logo'); if(logo) { logo.src=db.settings.logoDataUrl||'assets/benhill-crest.jpg'; logo.alt='Benhill English School crest'; }
     const name=$('#school-name-nav'); if(name) name.textContent=schoolName.toUpperCase();
     const footer=$('#footer-school'); if(footer) footer.textContent=`${schoolName} · ACTIVITY MANAGER`;
-    document.title=`${schoolName} · Arts & Sports Portal`;
+    document.title=`${schoolName} · Arts & Sports Manager`;
     const bg=db.settings.backgroundDataUrl;document.documentElement.style.setProperty('--school-background',bg?`url("${bg}")`:'url("assets/campus-hero.jpg")');
   }
   let registrationLookupSource=null,registrationLookupLength=-1,registrationByStudent=new Map(),registrationByProgramme=new Map();
