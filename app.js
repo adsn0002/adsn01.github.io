@@ -238,10 +238,11 @@
       const remoteMap=new Map(rows.filter(row=>row&&isSharedStorageKey(row.key))
         .map(row=>[row.key,row]));
       const localMap=new Map(localEntries);
-      const hasConflict=rows.length
-        ? (localEntries.some(([key,value])=>!remoteMap.has(key)||remoteMap.get(key).value!==value)
-          || rows.some(row=>isSharedStorageKey(row.key)&&!localMap.has(row.key)))
-        : localEntries.length>0;
+      const hasConflict=localEntries.length>0 && (
+        !rows.length
+        || localEntries.some(([key,value])=>!remoteMap.has(key)||remoteMap.get(key).value!==value)
+        || rows.some(row=>isSharedStorageKey(row.key)&&!localMap.has(row.key))
+      );
       if (hasConflict) {
         // Never upload, overwrite or merge browser-local school data implicitly.
         sharedStorage.status='needs-reset';
