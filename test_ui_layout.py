@@ -122,7 +122,7 @@ check("admin selected counts are not highlighted with the active row", "body[dat
 check("light/dark input placeholders use theme-specific readable values", "--v17-placeholder:#5E6F80" in css and "--v17-placeholder:#B7C3CE" in css)
 check("reduced motion disables navigation, chart and ambient transitions", "@media (prefers-reduced-motion: reduce)" in css and "animation-duration:.01ms" in css and "transition:none !important" in css)
 check("custom scrollbar tracks and thumbs are defined for both themes", "::-webkit-scrollbar-thumb" in css and ":root[data-theme=\"dark\"] ::-webkit-scrollbar-thumb" in css)
-check("launcher build ID is unique to v18.8", "arts-and-sports-portal-v18.8-full-scope-audit" in server)
+check("launcher build ID is unique to v18.8", "arts-and-sports-portal-v18.8-demo-sync-hardening" in server)
 
 # V17.7: repair missing legacy semantic tokens and computed contrast regressions.
 check("legacy result and print variables are defined for light theme", "--text: var(--v17-text);" in css and "--surface-soft: var(--v17-surface-2);" in css and "--border: var(--v17-border);" in css and "--panel: var(--v17-surface);" in css)
@@ -137,7 +137,7 @@ check("physical registration print builder has valid border and surface tokens",
 check("result placeholders have readable contrast instead of muted-2 grey", ".winner-meta,\n.result-empty" in css and "color: var(--v17-muted) !important;" in css)
 check("info and warning panels use neutral theme surfaces in both themes", ".info-box,.warning-box" in css and ":root[data-theme=\"dark\"] .info-box" in css)
 check("important table and helper labels are no longer rendered at 9px", ".page-content .data-table th { font-size: 10.5px !important;" in css and ".page-content .form-field small,\n.page-content .subtle-note { font-size: 11px !important; }" in css)
-check("v18.8 build ID prevents reuse of an older server instance", "arts-and-sports-portal-v18.8-full-scope-audit" in server)
+check("v18.8 build ID prevents reuse of an older server instance", "arts-and-sports-portal-v18.8-demo-sync-hardening" in server)
 
 # Rendered contrast follow-up fixes for the administrator overview and event dates.
 check("admin overview task indexes and metadata have readable foreground tokens", "body[data-page=\"admin\"] .admin-task-index" in css and "body[data-page=\"admin\"] .admin-recent-item time" in css and "body[data-page=\"admin\"] .admin-quick-copy small" in css)
@@ -157,7 +157,7 @@ check("parent hero banner keeps teacher-style image treatment", 'body[data-role=
 check("parent overview no longer reserves layout rules for the removed duplicate registration summary tiles", ".parent-summary-grid" not in css and ".parent-summary-item" not in css)
 check("parent quota cards have dark-theme surfaces and readable text", ":root[data-theme=\"dark\"] .parent-participation-panel" in css and "#F1F3F5" in css)
 check("admin breadcrumb and overview kicker labels use a consistent 10px minimum", "body[data-page=\"admin\"] .admin-workspace-context span" in css and ".admin-overview-kicker" in css and "font-size:10px !important;" in css)
-check("v18.8 build ID prevents reuse of older portal server instances", "arts-and-sports-portal-v18.8-full-scope-audit" in server)
+check("v18.8 build ID prevents reuse of older portal server instances", "arts-and-sports-portal-v18.8-demo-sync-hardening" in server)
 
 check("mobile teacher/parent drawer is capped at 300px and remains viewport-relative", "width:min(300px,88vw) !important;" in css and "max-width:min(300px,88vw) !important;" in css)
 check("mobile administrator drawer uses the same balanced responsive width", css.count("width:min(300px,88vw) !important;") >= 1 and "body[data-page=\"admin\"] .admin-section-nav" in css)
@@ -207,7 +207,7 @@ check("mobile portal drawer retains scrollable, non-shrinking workspace controls
 check("Administration keeps the normal portal menu hidden and its dedicated Back to Portal action", 'body[data-page="admin"] .sidebar {\n  display:none !important;' in css and 'class="admin-back-portal"' in app and 'data-action="admin-back-to-portal"' in app)
 check("desktop menu button can expand and collapse the regular sidebar", "sidebar.classList.add('sidebar-pinned')" in app and "sidebar.classList.contains('sidebar-pinned') ? closeSidebar(false) : openSidebar()" in app)
 check("desktop workspace selection continues through the shared role-change handler", "if(el.matches('select[data-workspace-role]')){closeSidebar(false);state.role=el.value;" in app and "state.page='dashboard';" in app)
-check("v18.8 launcher ID prevents reuse of v18.7 server instance", "arts-and-sports-portal-v18.8-full-scope-audit" in server)
+check("v18.8 launcher ID prevents reuse of v18.7 server instance", "arts-and-sports-portal-v18.8-demo-sync-hardening" in server)
 
 
 
