@@ -264,6 +264,58 @@
       if(button){button.disabled=false;button.textContent='Publish this browser demo data';}
     }
   }
+  async function loadSharedWorkspaceIntoCurrentBrowser() {
+    if (!isAdmin()) return toast('Administrator access required.','error');
+    if (!sharedStorage.endpoint || !sharedStorage.publishableKey) return toast('Supabase is not configured in this browser.','error');
+    if (!confirm('Replace this browser local portal data with the shared online demo workspace? Unsynced local edits on this device will be replaced. Export a backup first. Continue?')) return;
+    const button=$('[data-action="shared-load-cloud"]');
+    if(button){button.disabled=true;button.textContent='Loading shared data…';}
+    sharedStorage.ready=false;
+    sharedStorage.status='syncing';
+    if(sharedStorage.flushTimer){clearTimeout(sharedStorage.flushTimer);sharedStorage.flushTimer=null;}
+    sharedStorage.pending.clear();
+    updateStorageStatus();
+    try {
+      const url=sharedStorage.endpoint+'?select=key,value,updated_at&order=key.asc';
+      const response=await fetch(url,{headers:sharedStorageHeaders(),cache:'no-store'});
+      if(!response.ok) throw new Error('Could not read the shared workspace ('+response.status+').');
+      const rows=await response.json();
+      const remoteRows=rows.filter(row=>row&&isSharedStorageKey(row.key));
+      const main=remoteRows.find(row=>row.key===KEY);
+      if(!main) throw new Error('The shared demo workspace has not been published yet. Publish it from the source device first.');
+      const parsed=migrateDatabase(JSON.parse(main.value));
+      validateBackupShape(parsed);
+      const remoteKeys=new Set(remoteRows.map(row=>row.key));
+      for(const key of storageKeys()) if(isSharedStorageKey(key)&&!remoteKeys.has(key)) removeLocalStorageSilently(key);
+      for(const row of remoteRows) setLocalStorageSilently(row.key,row.value);
+      db=parsed;
+      electionDb=loadElectionDatabase(Array.isArray(db.elections)?db.elections:[],db.nextIds||{});
+      delete db.elections; delete db.nextIds.election; delete db.nextIds.position; delete db.nextIds.candidate;
+      classes=Array.isArray(db.settings?.classes)&&db.settings.classes.length?db.settings.classes.map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=12).sort((a,b)=>a-b):Array.from({length:12},(_,i)=>i+1);
+      sections=Array.isArray(db.settings?.sections)&&db.settings.sections.length?db.settings.sections:['A','B','C'];
+      registrationLookupSource=null; studentLookupSource=null; programmeLookupSource=null;
+      sharedStorage.lastSeen.clear();
+      for(const row of remoteRows) sharedStorage.lastSeen.set(row.key,row.updated_at);
+      sharedStorage.pending.clear();
+      sharedStorage.ready=true;
+      sharedStorage.status='connected';
+      sharedStorage.warned=false;
+      if(!sharedStorage.pollTimer) sharedStorage.pollTimer=setInterval(pollSharedStorage,4000);
+      if(!pageAllowed(state.page)) state.page=fallbackPage();
+      updateStorageStatus();
+      render();
+      toast('Shared demo workspace loaded on this device.');
+    } catch(error) {
+      sharedStorage.ready=false;
+      sharedStorage.status='error';
+      updateStorageStatus();
+      console.warn('Could not load the shared demo workspace:',error);
+      toast('Shared workspace could not be loaded. '+(error.message||'Local data was kept where possible.'),'error');
+    } finally {
+      if(button){button.disabled=false;button.textContent='Load shared demo data to this browser';}
+    }
+  }
+
   async function initializeSharedStorage() {
     const config=window.PORTAL_SUPABASE_CONFIG;
     if (!config?.url || !config?.publishableKey) {
@@ -2351,7 +2403,7 @@
         <section class="settings-card"><h3>Full browser backup</h3><p>Download all local portal data, including students, staff, programme records, registrations, results, events and election configuration.</p><div class="form-actions"><button class="btn btn-secondary" type="button" data-action="backup-export">Download JSON backup</button><button class="btn btn-quiet" type="button" data-action="backup-import">Restore JSON backup</button></div><input id="backup-file" type="file" accept=".json,application/json" hidden><small class="table-subline">Restore replaces the current browser data after validation and confirmation. Keep a separate copy of your current backup.</small></section>
         <section class="settings-card"><h3>Export school records</h3><p>Download the programme catalogue, full registration list and activity audit log.</p><div class="form-actions"><button class="btn btn-secondary" type="button" data-action="programme-export">Programmes · CSV</button><button class="btn btn-secondary" type="button" data-action="programme-export-xlsx">Programmes · Excel</button><button class="btn btn-secondary" type="button" data-action="registration-export">Registrations · CSV</button><button class="btn btn-secondary" type="button" data-action="registration-export-xlsx">Registrations · Excel</button><button class="btn btn-quiet" type="button" data-action="audit-export">Audit log · JSON</button></div></section>
         <section class="settings-card"><h3>Prepare for a new school year</h3><p>Clear annual programme registrations and results without rebuilding the school directory or configuring the portal again.</p><div class="report-summary"><div class="report-tile"><strong>${activity.registrations}</strong><small>Programme registrations</small></div><div class="report-tile"><strong>${activity.ranks+activity.sahodaya}</strong><small>Programme outcomes</small></div><div class="report-tile"><strong>${activity.ballots===null?'Review required':activity.ballots}</strong><small>Election ballots</small></div></div><div class="warning-box">This removes programme registrations, school ranks, Sahodaya selections and local election ballots. Voter codes are not issued or verified in this build. Student and setup records stay in place. Back up first.</div><div class="form-actions"><button class="btn btn-danger" type="button" data-action="annual-data-reset">Clear annual registrations &amp; results</button></div><small class="table-subline">${activityTotal} activity records are currently linked to this year's programme and election workflows. Elections return to Draft; their positions and candidates are kept.</small></section>
-        <section class="settings-card"><h3>Local data status</h3><div class="report-summary"><div class="report-tile"><strong>${activeStudents}</strong><small>Active students</small></div><div class="report-tile"><strong>${archivedStudents}</strong><small>Archived students</small></div><div class="report-tile"><strong>${records}</strong><small>Total student records</small></div></div><p>${sharedStorage.status==='connected'?'The demo workspace is connected to Supabase and synchronises between devices.':sharedStorage.status==='needs-reset'?'This browser has local changes that are not yet shared. Publish this browser demo data below to preserve the latest settings and connect this copy.':'The browser currently holds a local copy. Publish its fictional demo data below to make it the shared workspace.'}</p>${sharedStorage.status!=='connected'?'<div class="warning-box">Publishing replaces the shared online demo workspace for every device with the data currently saved in this browser. Only publish fictional test data. Export a backup first.</div><div class="form-actions"><button class="btn btn-primary" type="button" data-action="shared-publish-local">Publish this browser demo data</button></div>':''}<div class="warning-box">The demo reset below replaces the entire local working copy with fictional sample data. It is different from the annual activity reset above.</div><div class="form-actions"><button class="btn btn-danger" type="button" data-action="demo-reset">Replace with fictional demo data</button></div></section>
+        <section class="settings-card"><h3>Local data status</h3><div class="report-summary"><div class="report-tile"><strong>${activeStudents}</strong><small>Active students</small></div><div class="report-tile"><strong>${archivedStudents}</strong><small>Archived students</small></div><div class="report-tile"><strong>${records}</strong><small>Total student records</small></div></div><p>${sharedStorage.status==='connected'?'The demo workspace is connected to Supabase and synchronises between devices.':sharedStorage.status==='needs-reset'?'This browser has local changes that are not yet shared. Publish this browser demo data below to preserve the latest settings and connect this copy.':'The browser currently holds a local copy. Publish its fictional demo data below to make it the shared workspace.'}</p>${sharedStorage.status!=='connected'?'<div class="warning-box">Publishing replaces the shared online demo workspace for every device with the data currently saved in this browser. Only publish fictional test data. Export a backup first.</div><div class="form-actions"><button class="btn btn-primary" type="button" data-action="shared-publish-local">Publish this browser demo data</button></div>':''}<div class="form-actions"><button class="btn btn-secondary" type="button" data-action="shared-load-cloud">Load shared demo data to this browser</button></div><div class="warning-box">The demo reset below replaces the entire local working copy with fictional sample data. It is different from the annual activity reset above.</div><div class="form-actions"><button class="btn btn-danger" type="button" data-action="demo-reset">Replace with fictional demo data</button></div></section>
       </div>`;
   }
 
@@ -2792,7 +2844,7 @@
 
   function handleAction(action, el) {
     if(databaseRecoveryError&&action!=='backup-import'&&action!=='fullscreen')return toast('The saved school data needs recovery. Restore a valid backup before using the portal.','error');
-    const adminOnly = new Set(['admin-back-to-portal','account-panel','admin-tab','student-show-archived','student-restore','student-import','programme-add','programme-edit','programme-archive','programme-restore','programme-duplicate','result-manage','rank-edit','rank-clear','event-add','event-edit','event-delete','staff-add','staff-edit','staff-disable','teacher-manage-powers','house-apply-selected','house-select-all','house-select-student','student-move-selected','student-move-one','student-move-picked','programme-export','registration-export','audit-export','backup-export','backup-import','shared-publish-local','demo-reset','annual-data-reset','election-add','election-toggle','election-select-admin','election-copy-vote-link','election-copy-live-link','election-open-vote-link','election-open-live-link','election-codes','election-codes-revoke','position-add','position-candidate-add','position-remove','candidate-remove','candidate-edit','participation-manager-export','participation-manager-export-xlsx','participation-manager-clear','deadline-select-all','deadline-select-none','results-filter-clear','programme-export-xlsx','registration-export-xlsx','admin-registration-add']);
+    const adminOnly = new Set(['admin-back-to-portal','account-panel','admin-tab','student-show-archived','student-restore','student-import','programme-add','programme-edit','programme-archive','programme-restore','programme-duplicate','result-manage','rank-edit','rank-clear','event-add','event-edit','event-delete','staff-add','staff-edit','staff-disable','teacher-manage-powers','house-apply-selected','house-select-all','house-select-student','student-move-selected','student-move-one','student-move-picked','programme-export','registration-export','audit-export','backup-export','backup-import','shared-publish-local','shared-load-cloud','demo-reset','annual-data-reset','election-add','election-toggle','election-select-admin','election-copy-vote-link','election-copy-live-link','election-open-vote-link','election-open-live-link','election-codes','election-codes-revoke','position-add','position-candidate-add','position-remove','candidate-remove','candidate-edit','participation-manager-export','participation-manager-export-xlsx','participation-manager-clear','deadline-select-all','deadline-select-none','results-filter-clear','programme-export-xlsx','registration-export-xlsx','admin-registration-add']);
     if (adminOnly.has(action) && !isAdmin()) { toast('This action is available to administrators only.', 'error'); return; }
     if (action === 'student-export' && !['admin','teacher'].includes(state.role)) { toast('Directory export is not available to this role.', 'error'); return; }
     if (action === 'navigate' && !pageAllowed(el.dataset.page)) { toast('This workspace is not available to the selected role.', 'warning'); return; }
@@ -2957,6 +3009,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
       case 'backup-export':{const backupElections=JSON.parse(JSON.stringify(electionDb.elections)).map(e=>({...e,ballots:readElectionBallots(e.id)}));downloadJSON({...JSON.parse(JSON.stringify(db)),elections:backupElections,nextIds:{...db.nextIds,...electionDb.nextIds}},'school-portal-backup.json');toast('Backup downloaded.');}break;
       case 'annual-data-reset':if(isAdmin())openModal('Clear annual registrations & results',annualDataResetForm(),'YEAR-END DATA RESET');break;
       case 'shared-publish-local':if(isAdmin())publishLocalBrowserWorkspace();break;
+      case 'shared-load-cloud':if(isAdmin())loadSharedWorkspaceIntoCurrentBrowser();break;
       case 'demo-reset':if(isAdmin()&&confirm('Replace the entire browser workspace with the original fictional sample data? This will delete current students, accounts, settings, programmes, events and activity records. Export a backup first.')){
         let storageSnapshot;try{storageSnapshot=snapshotPortalDataStorage();}catch(error){return toast(`Demo reset stopped before changing data: ${error.message}`,'error');}
         const previousDatabase=JSON.stringify(db),previousElection=JSON.stringify(electionDb),previousSections=[...sections],previousRecovery=electionRecoveryError;
