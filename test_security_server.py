@@ -39,6 +39,11 @@ try:
     checks.append(('unknown assets blocked', request('GET','/assets/nope.js')[0] == 404))
     checks.append(('valid asset served', request('GET','/assets/mark.svg')[0] == 200))
     checks.append(('sports SVG asset served', request('GET','/assets/sports.svg')[0] == 200))
+    crest_status, crest_headers, crest_body = request('GET','/assets/benhill-crest.jpg')
+    checks.append(('Benhill school crest is served', crest_status == 200 and next((v for k,v in crest_headers.items() if k.lower()=='content-type'),'').startswith('image/jpeg') and len(crest_body)>1000))
+    config_status, config_headers, config_body = request('GET','/supabase-config.js')
+    checks.append(('Supabase browser config is served', config_status == 200 and b'PORTAL_SUPABASE_CONFIG' in config_body))
+    checks.append(('local CSP permits the configured Supabase API origin', 'https://fockkhxdvplmldoobnze.supabase.co' in headers.get('Content-Security-Policy','')))
     for asset in ('arts-feature-new.webp','arts-performance-new.webp','sports-feature-new.webp','sports-action-new.webp'):
         asset_status, asset_headers, asset_body = request('GET',f'/assets/{asset}')
         checks.append((f'new image served: {asset}', asset_status == 200 and next((v for k,v in asset_headers.items() if k.lower()=='content-type'),'').startswith('image/webp') and len(asset_body)>1000))
