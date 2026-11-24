@@ -1,4 +1,4 @@
-(() => {
+(async () => {
   'use strict';
 
   // The school calendar is always based on India Standard Time, even if the
@@ -55,6 +55,201 @@
   let persistentStorageAvailable = true;
   let storageWarningShown = false;
   let databaseRecoveryError = null;
+  // Shared trial storage mirrors the existing localStorage data model.
+  // This uses anonymous access and MUST only contain synthetic test data.
+  const sharedStorage = {
+    status: 'connecting', ready: false, endpoint: '', publishableKey: '',
+    lastSeen: new Map(), pending: new Map(), flushTimer: null,
+    pollTimer: null, polling: false, warned: false
+  };
+  const isSharedStorageKey = key => typeof key === 'string'
+    && key.startsWith('school-arts-sports-')
+    && key !== THEME_KEY && key !== THEME_DEFAULT_VERSION_KEY;
+  function sharedStorageHeaders(extra={}) {
+    return { apikey: sharedStorage.publishableKey, ...extra };
+  }
+  function setLocalStorageSilently(key,value) {
+    try { window.localStorage.setItem(key,value); } catch { memoryStorageOverrides.add(key); }
+    memoryStorage.set(key,value);
+    memoryStorageRemoved.delete(key);
+  }
+  function removeLocalStorageSilently(key) {
+    try { window.localStorage.removeItem(key); } catch {}
+    memoryStorage.delete(key);
+    memoryStorageOverrides.delete(key);
+    memoryStorageRemoved.add(key);
+  }
+  function queueSharedStorageWrite(key,value) {
+    if (!sharedStorage.ready || !isSharedStorageKey(key)) return;
+    sharedStorage.pending.set(key,String(value));
+    if (!sharedStorage.flushTimer) sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,180);
+  }
+  function queueSharedStorageDelete(key) {
+    if (!sharedStorage.ready || !isSharedStorageKey(key)) return;
+    sharedStorage.pending.set(key,null);
+    if (!sharedStorage.flushTimer) sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,180);
+  }
+  async function flushSharedStorageWrites() {
+    sharedStorage.flushTimer=null;
+    if (!sharedStorage.ready || !sharedStorage.pending.size) return;
+    const batch=[...sharedStorage.pending.entries()];
+    for (const [key,value] of batch) {
+      if (sharedStorage.pending.get(key)!==value) continue;
+      sharedStorage.pending.delete(key);
+      try {
+        let response;
+        if (value===null) {
+          response=await fetch(`${sharedStorage.endpoint}?key=eq.${encodeURIComponent(key)}`,{
+            method:'DELETE',headers:sharedStorageHeaders({Prefer:'return=minimal'})
+          });
+        } else {
+          response=await fetch(`${sharedStorage.endpoint}?on_conflict=key`,{
+            method:'POST',
+            headers:sharedStorageHeaders({'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=representation'}),
+            body:JSON.stringify({key,value})
+          });
+        }
+        if (!response.ok) throw new Error(`Supabase write failed (${response.status}).`);
+        if (value!==null) {
+          const rows=await response.json().catch(()=>[]);
+          const row=Array.isArray(rows)?rows[0]:null;
+          if (row?.updated_at) sharedStorage.lastSeen.set(key,row.updated_at);
+        } else {
+          sharedStorage.lastSeen.delete(key);
+        }
+      } catch (error) {
+        if (!sharedStorage.pending.has(key)) sharedStorage.pending.set(key,value);
+        sharedStorage.status='error';
+        if (!sharedStorage.warned) {
+          sharedStorage.warned=true;
+          console.warn('Shared test storage is temporarily unavailable:',error);
+        }
+        updateStorageStatus();
+        if (!sharedStorage.flushTimer) sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,5000);
+        return;
+      }
+    }
+    sharedStorage.status='connected';
+    sharedStorage.warned=false;
+    updateStorageStatus();
+    if (sharedStorage.pending.size && !sharedStorage.flushTimer)
+      sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,180);
+  }
+  function applyRemoteSharedStorageChanges(changedKeys) {
+    try {
+      if (changedKeys.includes(KEY)) {
+        const raw=window.localStorage.getItem(KEY);
+        if (raw) {
+          const incoming=migrateDatabase(JSON.parse(raw));
+          validateBackupShape(incoming);
+          db=incoming;
+          if (Array.isArray(db.settings?.classes)&&db.settings.classes.length) classes=db.settings.classes.map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=12).sort((a,b)=>a-b);
+          if (Array.isArray(db.settings?.sections)&&db.settings.sections.length) sections=db.settings.sections;
+          registrationLookupSource=null;studentLookupSource=null;programmeLookupSource=null;
+        }
+      }
+      if (changedKeys.some(key=>key!==KEY&&key.startsWith('school-arts-sports-'))) {
+        electionDb=loadElectionDatabase(Array.isArray(db.elections)?db.elections:[],db.nextIds||{});
+      }
+      render();
+      toast('Shared test workspace updated from another device.','info');
+    } catch (error) {
+      console.warn('A shared update could not be applied safely:',error);
+      toast('A shared update was received but could not be applied. Refresh after checking the data.','warning');
+    }
+  }
+  async function pollSharedStorage() {
+    if (!sharedStorage.ready || sharedStorage.polling) return;
+    sharedStorage.polling=true;
+    try {
+      const response=await fetch(`${sharedStorage.endpoint}?select=key,value,updated_at&order=key.asc`,{
+        headers:sharedStorageHeaders(),cache:'no-store'
+      });
+      if (!response.ok) throw new Error(`Supabase read failed (${response.status}).`);
+      const rows=await response.json();
+      const present=new Set();
+      const changed=[];
+      for (const row of rows) {
+        if (!row || !isSharedStorageKey(row.key)) continue;
+        present.add(row.key);
+        if (sharedStorage.pending.has(row.key)) continue;
+        const previousStamp=sharedStorage.lastSeen.get(row.key);
+        if (previousStamp===row.updated_at) continue;
+        const current=storageGet(row.key);
+        if (current!==row.value) {
+          setLocalStorageSilently(row.key,row.value);
+          changed.push(row.key);
+        }
+        sharedStorage.lastSeen.set(row.key,row.updated_at);
+      }
+      for (const key of [...sharedStorage.lastSeen.keys()]) {
+        if (present.has(key)||sharedStorage.pending.has(key)) continue;
+        removeLocalStorageSilently(key);
+        sharedStorage.lastSeen.delete(key);
+        changed.push(key);
+      }
+      sharedStorage.status='connected';
+      sharedStorage.warned=false;
+      if (changed.length) applyRemoteSharedStorageChanges(changed);
+      else updateStorageStatus();
+    } catch (error) {
+      sharedStorage.status='error';
+      if (!sharedStorage.warned) {
+        sharedStorage.warned=true;
+        console.warn('Shared test storage polling failed:',error);
+      }
+      updateStorageStatus();
+    } finally {
+      sharedStorage.polling=false;
+    }
+  }
+  async function initializeSharedStorage() {
+    const config=window.PORTAL_SUPABASE_CONFIG;
+    if (!config?.url || !config?.publishableKey) {
+      sharedStorage.status='local';
+      return;
+    }
+    const base=String(config.url);
+    sharedStorage.endpoint=(base.endsWith('/')?base.slice(0,-1):base)+'/rest/v1/portal_storage';
+    sharedStorage.publishableKey=config.publishableKey;
+    try {
+      const response=await fetch(`${sharedStorage.endpoint}?select=key,value,updated_at&order=key.asc`,{
+        headers:sharedStorageHeaders(),cache:'no-store'
+      });
+      if (!response.ok) throw new Error(`Supabase connection failed (${response.status}).`);
+      const rows=await response.json();
+      if (rows.length) {
+        const remoteKeys=new Set();
+        for (const row of rows) {
+          if (!row || !isSharedStorageKey(row.key)) continue;
+          remoteKeys.add(row.key);
+          setLocalStorageSilently(row.key,row.value);
+          sharedStorage.lastSeen.set(row.key,row.updated_at);
+        }
+        for (const key of storageKeys()) {
+          if (isSharedStorageKey(key)&&!remoteKeys.has(key)) removeLocalStorageSilently(key);
+        }
+      }
+      sharedStorage.ready=true;
+      sharedStorage.status='connected';
+      if (!rows.length) {
+        // The first device seeds the empty trial workspace from its current test copy.
+        for (const key of storageKeys()) {
+          if (!isSharedStorageKey(key)) continue;
+          const value=storageGet(key);
+          if (value!==null) sharedStorage.pending.set(key,value);
+        }
+        if (sharedStorage.pending.size) sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,80);
+      }
+      sharedStorage.pollTimer=setInterval(pollSharedStorage,4000);
+      updateStorageStatus();
+    } catch (error) {
+      sharedStorage.status='error';
+      console.warn('Supabase is not available; this browser will continue in local-only mode:',error);
+      updateStorageStatus();
+    }
+  }
+
   function storageKeys() {
     const keys=new Set();
     try {
@@ -89,6 +284,7 @@
       memoryStorageOverrides.delete(key);
       memoryStorageRemoved.delete(key);
       if(key===KEY)persistentStorageAvailable=true;
+      queueSharedStorageWrite(key,text);
       return true;
     } catch {
       persistentStorageAvailable=false;
@@ -96,6 +292,7 @@
         memoryStorage.set(key,text);
         memoryStorageOverrides.add(key);
         memoryStorageRemoved.delete(key);
+        queueSharedStorageWrite(key,text);
         return true;
       } catch { return false; }
     }
@@ -106,12 +303,14 @@
       memoryStorage.delete(key);
       memoryStorageOverrides.delete(key);
       memoryStorageRemoved.delete(key);
+      queueSharedStorageDelete(key);
       return true;
     } catch {
       persistentStorageAvailable=false;
       memoryStorage.delete(key);
       memoryStorageOverrides.delete(key);
       memoryStorageRemoved.add(key);
+      queueSharedStorageDelete(key);
       return true;
     }
   }
@@ -120,6 +319,7 @@
   let sections = ['A', 'B', 'C'];
     const roleNames = { admin: 'Administrator', teacher: 'Teacher', parent: 'Parent' };
   const pageNames = { dashboard: 'Overview', students: 'Students', arts: 'Arts programmes', sports: 'Sports programmes', groups: 'Group Items', 'programme-detail': 'Programme details', results: 'Final results', reports: 'Reports', 'not-registered': 'Not registered', calendar: 'Events', portal: 'My child', 'house-assign': 'House assignment', admin: 'Administration' };
+  await initializeSharedStorage();
   let db = loadDatabase();
   let electionDb = loadElectionDatabase(Array.isArray(db.elections) ? db.elections : [], db.nextIds || {});
   delete db.elections;
@@ -601,8 +801,19 @@
   }
   function updateStorageStatus() {
     const strong=$('.sidebar-status strong'),small=$('.sidebar-status small');if(!strong||!small)return;
-    strong.textContent=persistentStorageAvailable?'Local working copy':'Temporary local session';
-    small.textContent=persistentStorageAvailable?'Changes saved in this browser':'Changes are lost when this tab closes';
+    if(sharedStorage.status==='connected'){
+      strong.textContent='Shared test workspace';
+      small.textContent='Multi-device sync active · no sign-in';
+    }else if(sharedStorage.status==='connecting'){
+      strong.textContent='Connecting shared workspace';
+      small.textContent='Checking Supabase connection…';
+    }else if(sharedStorage.status==='error'){
+      strong.textContent='Shared sync unavailable';
+      small.textContent='This browser is currently working locally';
+    }else{
+      strong.textContent=persistentStorageAvailable?'Local working copy':'Temporary local session';
+      small.textContent=persistentStorageAvailable?'Changes saved in this browser':'Changes are lost when this tab closes';
+    }
   }
   function audit(action, record, detail = '') {
     const actor=userByRole(state.role)?.displayName||roleNames[state.role]||'System';
@@ -3787,6 +3998,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     if(location.hash){syncRouteFromLocation();}
     if(!pageAllowed(state.page))state.page=fallbackPage();
     render();
+    updateStorageStatus();
     if(databaseRecoveryError)toast('Existing portal data could not be read. The original saved data has been preserved and edits are blocked. Restore a valid backup before continuing; do not replace this workspace with demo data.','error');
   }
   init();
