@@ -93,7 +93,7 @@ check('local launcher serves the Supabase browser config', '"supabase-config.js"
 check('local launcher serves the Benhill crest', '"benhill-crest.jpg"' in server)
 check('local launcher CSP permits the configured Supabase origin', "connect-src 'self' https://fockkhxdvplmldoobnze.supabase.co" in server)
 check('atomic publish migration matches the checked-in setup function', 'portal_storage_replace_workspace' in atomic_migration and 'security invoker' in atomic_migration.lower())
-check('launcher build ID is unique to v18.8 full-scope audit', 'arts-and-sports-portal-v18.8-full-scope-audit' in server)
+check('launcher build ID is unique to v18.8 full-scope audit', 'arts-and-sports-portal-v18.8-demo-sync-hardening' in server)
 styles=(ROOT/'styles.css').read_text(encoding='utf-8')
 check('v16 whole-site palette uses warm paper, mineral blue-grey and restrained school brick', '--v16-paper: #F5F1E9' in styles and '--v16-mineral: #DCE4EB' in styles and '--v16-brick: #822811' in styles)
 check('v16 dark theme provides matching school palette tokens', '--v16-paper: #151E29' in styles and '--v16-mineral: #253448' in styles and '--v16-brick: #D4937D' in styles)
