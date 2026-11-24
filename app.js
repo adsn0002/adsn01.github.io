@@ -136,7 +136,7 @@
   // migration, explicit user theme choices are remembered across launches.
   let savedTheme = themeDefaultVersion === '3' && savedThemePreference ? savedThemePreference : 'light';
   const state = {
-    page: 'dashboard', role: 'admin', previewUserId: 1, selectedStudentId: 6, programmeId: null,
+    page: 'dashboard', role: 'parent', previewUserId: 1, selectedStudentId: 6, programmeId: null,
     studentFilters: {}, programmeFilters: {}, reportFilters: {}, reportPrint: {area:'Sports', programme:'', q:'', age:'', gender:'', classNo:'', section:'', house:'', category:'', customStudentIds:[], columns:['name','admission','age','dob','gender','class','section','house','category']},
     adminTab: 'overview', accountPanel: 'admins', electionId: 1,
     theme: savedTheme, searchTimer: null,
