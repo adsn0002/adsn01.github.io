@@ -68,6 +68,27 @@
   function sharedStorageHeaders(extra={}) {
     return { apikey: sharedStorage.publishableKey, ...extra };
   }
+  async function fetchSharedStorageRows() {
+    const rows=[];
+    const pageSize=1000;
+    const maximumRows=10000;
+    let lastKey='';
+    while(rows.length<=maximumRows) {
+      const cursor=lastKey?('&key=gt.'+encodeURIComponent(lastKey)):'';
+      const url=sharedStorage.endpoint+'?select=key,value,updated_at&order=key.asc&limit='+pageSize+cursor;
+      const response=await fetch(url,{headers:sharedStorageHeaders(),cache:'no-store'});
+      if(!response.ok) throw new Error('Supabase read failed ('+response.status+').');
+      const batch=await response.json();
+      if(!Array.isArray(batch)) throw new Error('Supabase returned an invalid shared workspace response.');
+      if(!batch.length) return rows;
+      if(rows.length+batch.length>maximumRows) throw new Error('The shared demo workspace exceeds the 10,000-key safety limit.');
+      rows.push(...batch);
+      lastKey=String(batch[batch.length-1]?.key||'');
+      if(batch.length<pageSize) return rows;
+      if(!lastKey) throw new Error('Supabase returned a page without a usable key cursor.');
+    }
+    throw new Error('The shared demo workspace exceeds the 10,000-key safety limit.');
+  }
   function setLocalStorageSilently(key,value) {
     try { window.localStorage.setItem(key,value); } catch { memoryStorageOverrides.add(key); }
     memoryStorage.set(key,value);
@@ -162,11 +183,7 @@
     if (!sharedStorage.ready || sharedStorage.polling) return;
     sharedStorage.polling=true;
     try {
-      const response=await fetch(`${sharedStorage.endpoint}?select=key,value,updated_at&order=key.asc`,{
-        headers:sharedStorageHeaders(),cache:'no-store'
-      });
-      if (!response.ok) throw new Error(`Supabase read failed (${response.status}).`);
-      const rows=await response.json();
+      const rows=await fetchSharedStorageRows();
       const present=new Set();
       const changed=[];
       for (const row of rows) {
@@ -237,9 +254,7 @@
       const rpcUrl=sharedStorage.endpoint.replace('/rest/v1/portal_storage','/rest/v1/rpc/portal_storage_replace_workspace');
       const writeResponse=await fetch(rpcUrl,{method:'POST',headers:sharedStorageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({p_rows:localRows})});
       if(!writeResponse.ok) throw new Error('Supabase rejected the atomic demo workspace publish ('+writeResponse.status+').');
-      const verifyResponse=await fetch(readUrl,{headers:sharedStorageHeaders(),cache:'no-store'});
-      if(!verifyResponse.ok) throw new Error('The published workspace could not be verified ('+verifyResponse.status+').');
-      const verifiedRows=await verifyResponse.json();
+      const verifiedRows=await fetchSharedStorageRows();
       const verifiedMap=new Map(verifiedRows.filter(row=>row&&isSharedStorageKey(row.key)).map(row=>[row.key,row]));
       if(verifiedMap.size!==localRows.length||localRows.some(row=>verifiedMap.get(row.key)?.value!==row.value)) throw new Error('The cloud data did not match this browser after publishing.');
       sharedStorage.lastSeen.clear();
@@ -268,10 +283,7 @@
     sharedStorage.pending.clear();
     updateStorageStatus();
     try {
-      const url=sharedStorage.endpoint+'?select=key,value,updated_at&order=key.asc';
-      const response=await fetch(url,{headers:sharedStorageHeaders(),cache:'no-store'});
-      if(!response.ok) throw new Error('Could not read the shared workspace ('+response.status+').');
-      const rows=await response.json();
+      const rows=await fetchSharedStorageRows();
       const remoteRows=rows.filter(row=>row&&isSharedStorageKey(row.key));
       const main=remoteRows.find(row=>row.key===KEY);
       if(!main) throw new Error('The shared demo workspace has not been published yet. Publish it from the source device first.');
@@ -318,11 +330,7 @@
     sharedStorage.endpoint=(base.endsWith('/')?base.slice(0,-1):base)+'/rest/v1/portal_storage';
     sharedStorage.publishableKey=config.publishableKey;
     try {
-      const response=await fetch(`${sharedStorage.endpoint}?select=key,value,updated_at&order=key.asc`,{
-        headers:sharedStorageHeaders(),cache:'no-store'
-      });
-      if (!response.ok) throw new Error(`Supabase connection failed (${response.status}).`);
-      const rows=await response.json();
+      const rows=await fetchSharedStorageRows();
       const localEntries=storageKeys().filter(isSharedStorageKey)
         .map(key=>[key,storageGet(key)]).filter(([,value])=>value!==null);
       const remoteMap=new Map(rows.filter(row=>row&&isSharedStorageKey(row.key))
