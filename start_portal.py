@@ -22,7 +22,7 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 PORT_RANGE = range(DEFAULT_PORT, DEFAULT_PORT + 21)
 PORT_FILE = ROOT / ".portal-port"
-BUILD_ID = "arts-and-sports-portal-v18.8-full-scope-audit"
+BUILD_ID = "arts-and-sports-portal-v18.8-demo-sync-hardening"
 
 # Only the files required by the browser app are published. The Python launcher,
 # bytecode, hidden files, backups and other files in the project folder stay private.
