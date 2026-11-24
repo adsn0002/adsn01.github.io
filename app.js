@@ -234,17 +234,9 @@
       const parsedMain=JSON.parse(localMain.value);
       if(!parsedMain||typeof parsedMain!=='object'||!parsedMain.settings||!Array.isArray(parsedMain.students)||!Array.isArray(parsedMain.programmes)) throw new Error('The local portal data did not pass the workspace structure check. Nothing was published.');
       const readUrl=sharedStorage.endpoint+'?select=key,value,updated_at&order=key.asc';
-      const remoteResponse=await fetch(readUrl,{headers:sharedStorageHeaders(),cache:'no-store'});
-      if(!remoteResponse.ok) throw new Error('Could not read the shared workspace ('+remoteResponse.status+').');
-      const remoteRows=await remoteResponse.json();
-      const localKeys=new Set(localRows.map(row=>row.key));
-      const writeResponse=await fetch(sharedStorage.endpoint+'?on_conflict=key',{method:'POST',headers:sharedStorageHeaders({'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(localRows)});
-      if(!writeResponse.ok) throw new Error('Supabase rejected the demo workspace ('+writeResponse.status+').');
-      for(const row of remoteRows){
-        if(!row||!isSharedStorageKey(row.key)||localKeys.has(row.key)) continue;
-        const removeResponse=await fetch(sharedStorage.endpoint+'?key=eq.'+encodeURIComponent(row.key),{method:'DELETE',headers:sharedStorageHeaders({Prefer:'return=minimal'})});
-        if(!removeResponse.ok) throw new Error('Could not replace an older shared record ('+removeResponse.status+').');
-      }
+      const rpcUrl=sharedStorage.endpoint.replace('/rest/v1/portal_storage','/rest/v1/rpc/portal_storage_replace_workspace');
+      const writeResponse=await fetch(rpcUrl,{method:'POST',headers:sharedStorageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({p_rows:localRows})});
+      if(!writeResponse.ok) throw new Error('Supabase rejected the atomic demo workspace publish ('+writeResponse.status+').');
       const verifyResponse=await fetch(readUrl,{headers:sharedStorageHeaders(),cache:'no-store'});
       if(!verifyResponse.ok) throw new Error('The published workspace could not be verified ('+verifyResponse.status+').');
       const verifiedRows=await verifyResponse.json();
