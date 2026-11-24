@@ -28,12 +28,12 @@ BUILD_ID = "arts-and-sports-portal-v18.8-full-scope-audit"
 # bytecode, hidden files, backups and other files in the project folder stay private.
 ALLOWED_ROOT_FILES = {
     "index.html", "poll.html", "poll-live.html",
-    "app.js", "poll.js", "poll-live.js",
+    "app.js", "poll.js", "poll-live.js", "supabase-config.js",
     "styles.css", "poll.css",
 }
 ALLOWED_ASSETS = {
     "arts-performance.jpg", "arts-workshop.jpg", "arts.svg",
-    "campus-hero.jpg", "campus.svg", "mark.svg",
+    "campus-hero.jpg", "campus.svg", "mark.svg", "benhill-crest.jpg",
     "sports-football.jpg", "sports-sprint.jpg", "sports.svg", "student-import-template.csv",
     "arts-feature-new.webp", "arts-performance-new.webp",
     "sports-feature-new.webp", "sports-action-new.webp",
@@ -45,7 +45,7 @@ CONTENT_SECURITY_POLICY = (
     "script-src 'self'; script-src-attr 'none'; "
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data:; font-src 'self' data:; "
-    "connect-src 'self'; media-src 'self'; manifest-src 'self'"
+    "connect-src 'self' https://fockkhxdvplmldoobnze.supabase.co; media-src 'self'; manifest-src 'self'"
 )
 
 
