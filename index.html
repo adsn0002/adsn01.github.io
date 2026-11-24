@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; media-src 'self'; manifest-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://fockkhxdvplmldoobnze.supabase.co; media-src 'self'; manifest-src 'self'">
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#F5F1E9">
@@ -10,6 +10,7 @@
   <title>School Arts &amp; Sports Portal</title>
   <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
+  <script src="supabase-config.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -62,7 +63,7 @@
         <button class="nav-item" data-page="admin" data-roles="admin"><span class="nav-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-settings"></use></svg></span><span>Administration</span></button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sidebar-status"><i></i><span><strong>Local working copy</strong><small>Changes saved in this browser</small></span></div>
+        <div class="sidebar-status"><i></i><span><strong>Connecting shared workspace</strong><small>Checking Supabase connection…</small></span></div>
         <div class="workspace-switcher sidebar-workspace-switcher" aria-label="Workspace preview controls">
           <label class="workspace-switcher-field"><span>Switch workspace</span><select id="role-preview" data-workspace-role aria-label="Choose workspace role"><option value="admin">Administrator</option><option value="teacher">Teacher</option><option value="parent">Parent</option></select></label>
           <label class="workspace-switcher-field" data-workspace-account-wrap><span>Preview account</span><select id="preview-account" data-preview-account aria-label="Choose preview account"></select></label>
