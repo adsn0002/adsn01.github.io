@@ -2155,6 +2155,7 @@
       events:db.events.length,
       elections:electionDb.elections.length,
       school:null,
+      sync:null,
       data:db.students.length,
       audit:db.audit.length
     };
@@ -2162,7 +2163,7 @@
       {label:'Students & classes',items:[['students','Student register'],['movement','Promotion & movement'],['incomplete','Needs attention'],['class-teachers','Class teachers'],['houses','House allocation']]},
       {label:'People & access',items:[['admins','Administrators'],['teachers','Teachers'],['parents','Parents & guardians']]},
       {label:'Programmes',items:[['programmes','Programme catalogue'],['registrations','Registrations'],['rules','Categories & limits'],['windows','Registration dates']]},
-      {label:'School operations',items:[['events','Events & notices'],['elections','School elections'],['school','School settings']]},
+      {label:'School operations',items:[['events','Events & notices'],['elections','School elections'],['school','School settings'],['sync','Shared demo & sync']]},
       {label:'Records',items:[['data','Import & backup'],['audit','Activity log']]}
     ];
     let content='';
@@ -2171,10 +2172,10 @@
       case 'admins':content=adminStaff('admin');break;case 'teachers':content=adminStaff('teacher');break;case 'parents':content=adminStaff('parent');break;
       case 'class-teachers':content=adminClassTeachers();break;case 'houses':content=adminHouses();break;case 'programmes':content=adminProgrammes();break;
       case 'registrations':content=adminRegistrations();break;case 'rules':content=adminRules();break;case 'windows':content=adminWindows();break;
-      case 'events':content=adminEvents();break;case 'school':content=adminSchool();break;case 'elections':content=adminElections();break;
+      case 'events':content=adminEvents();break;case 'school':content=adminSchool();break;case 'sync':content=adminSharedSync();break;case 'elections':content=adminElections();break;
       case 'data':content=adminData();break;case 'audit':content=adminAudit();break;default:state.adminTab='overview';content=adminOverview();
     }
-    const labels={overview:'Overview',students:'Student register',movement:'Promotion & movement',incomplete:'Needs attention','class-teachers':'Class teachers',houses:'House allocation',admins:'Administrators',teachers:'Teachers',parents:'Parents & guardians',programmes:'Programme catalogue',registrations:'Registrations',rules:'Categories & limits',windows:'Registration dates',events:'Events & notices',elections:'School elections',school:'School settings',data:'Import & backup',audit:'Activity log'};
+    const labels={overview:'Overview',students:'Student register',movement:'Promotion & movement',incomplete:'Needs attention','class-teachers':'Class teachers',houses:'House allocation',admins:'Administrators',teachers:'Teachers',parents:'Parents & guardians',programmes:'Programme catalogue',registrations:'Registrations',rules:'Categories & limits',windows:'Registration dates',events:'Events & notices',elections:'School elections',school:'School settings',sync:'Shared demo & sync',data:'Import & backup',audit:'Activity log'};
     const overviewButton=`<button class="admin-link admin-overview-link ${state.adminTab==='overview'?'active':''}" data-action="admin-tab" data-tab="overview" data-admin-nav-item="overview" ${state.adminTab==='overview'?'aria-current="page"':''}><span>Overview</span><small>School summary</small></button>`;
     const groupMarkup=groups.map(group=>`<section class="admin-nav-group" data-admin-nav-group aria-label="${esc(group.label)}"><h2>${esc(group.label)}</h2>${group.items.map(([id,label])=>{const count=groupCounts[id];return `<button class="admin-link ${state.adminTab===id?'active':''}" data-action="admin-tab" data-tab="${id}" data-admin-nav-item="${id}" ${state.adminTab===id?'aria-current="page"':''}><span>${esc(label)}</span>${Number.isFinite(count)?`<small class="admin-nav-count">${count}</small>`:''}</button>`;}).join('')}</section>`).join('');
     const mobileOptions=`<option value="overview" ${state.adminTab==='overview'?'selected':''}>Overview</option>${groups.map(group=>`<optgroup label="${esc(group.label)}">${group.items.map(([id,label])=>`<option value="${id}" ${state.adminTab===id?'selected':''}>${esc(label)}</option>`).join('')}</optgroup>`).join('')}`;
@@ -2394,10 +2395,35 @@
     const total=counts.registrations+counts.ranks+counts.sahodaya+(counts.ballots||0)+counts.electionCodes+counts.browserVoterFlags;
     return `<form data-form="annual-data-reset"><div class="warning-box"><strong>This permanently clears this year's activity records.</strong><p>Download a full JSON backup before continuing. This action cannot be undone from the portal.</p></div><div class="report-summary"><div class="report-tile"><strong>${counts.registrations}</strong><small>Programme registrations</small></div><div class="report-tile"><strong>${counts.ranks}</strong><small>School ranks</small></div><div class="report-tile"><strong>${counts.sahodaya}</strong><small>Sahodaya selections</small></div><div class="report-tile"><strong>${counts.ballots===null?'Review required':counts.ballots}</strong><small>Election ballots</small></div><div class="report-tile"><strong>${counts.electionCodes}</strong><small>Legacy token records (not voter codes)</small></div><div class="report-tile"><strong>${counts.browserVoterFlags}</strong><small>This browser's voted flags</small></div></div><p>It also invalidates every existing election link, clears this browser profile's already-voted flags where possible, returns elections to Draft and turns off published results. Old voting links will stop working; create and share new links when reusing the election setup. Voter codes are not issued or verified in this build. Programme and election definitions remain available.</p><p><strong>Kept:</strong> student records and profiles, staff and parent accounts, class/section and house setup, programme catalogue and rules, school settings and branding, events, election positions and candidates, and the audit log.</p><p><strong>Cleared:</strong> programme registrations, school ranks, Sahodaya selections, election ballots and any legacy token records. This version does not maintain separate actual-participation records or issue/verify voter codes.</p><div class="form-field"><label>Type <strong>CLEAR YEAR DATA</strong> to confirm${total===0?' (publication settings and election status will still be reset).':''}</label><input class="field" name="confirmation" autocomplete="off" spellcheck="false" placeholder="CLEAR YEAR DATA" required></div><div class="form-actions"><button class="btn" type="button" data-close-modal>Cancel</button><button class="btn btn-danger">Clear annual activity data</button></div></form>`;
   }
+
+  function adminSharedSync() {
+    const states = {
+      connected: {label:'Connected', title:'Shared demo workspace connected', detail:'This browser is synchronising with the online Supabase workspace. Changes are shared with other connected devices.'},
+      syncing: {label:'Working', title:'Updating shared workspace', detail:'A shared workspace update is currently being published or loaded.'},
+      connecting: {label:'Connecting', title:'Connecting to the shared workspace', detail:'The portal is checking the Supabase connection.'},
+      'needs-reset': {label:'Local changes', title:'This browser has not joined the shared workspace', detail:'This browser contains local data that differs from the cloud copy. Publish this browser’s demo data to share it, or load the shared demo data to use the cloud copy.'},
+      error: {label:'Offline', title:'Shared sync is unavailable', detail:'This browser is currently working locally. Check the connection, then retry publishing or loading the shared demo.'},
+      local: {label:'Local only', title:'Shared demo connection is not configured', detail:'This browser is using local storage only.'}
+    };
+    const current=states[sharedStorage.status]||states.local;
+    return `<div class="admin-intro"><h2>Shared demo &amp; device sync</h2><p>Manage the shared online Benhill demo workspace. These controls affect the online demo only; the private v18 working copy is separate.</p></div>
+      <div class="settings-grid">
+        <section class="settings-card">
+          <div class="section-title-row" style="margin-top:0"><div><h3>${esc(current.title)}</h3><p>${esc(current.detail)}</p></div><span class="year-pill">${esc(current.label)}</span></div>
+          <div class="info-box"><strong>Online demo only</strong><p>Publishing replaces the shared workspace for every device with the data in this browser. Only use fictional test data. Export a backup before publishing.</p></div>
+          ${sharedStorage.status!=='connected'?'<div class="form-actions"><button class="btn btn-primary" type="button" data-action="shared-publish-local" '+(sharedStorage.status==='syncing'?'disabled':'')+'>Publish this browser demo data</button></div>':''}
+          <div class="form-actions"><button class="btn btn-secondary" type="button" data-action="shared-load-cloud" ${sharedStorage.status==='syncing'?'disabled':''}>Load shared demo data to this browser</button></div>
+        </section>
+        <section class="settings-card">
+          <h3>How device sync works</h3>
+          <p>Connected browsers check for shared changes every few seconds. When a browser has conflicting local data, it asks for an explicit choice rather than silently overwriting either copy.</p>
+          <p><strong>Private v18:</strong> No Supabase connection is added to the private working version.</p>
+          <p><strong>Authentication:</strong> Not enabled for this fictional-data demo phase.</p>
+        </section>
+      </div>`;
+  }
+
   function adminData() {
-    const activeStudents=db.students.filter(student=>student.active).length;
-    const archivedStudents=db.students.length-activeStudents;
-    const records=db.students.length;
     const activity=annualActivityDataCounts();
     const activityTotal=activity.registrations+activity.ranks+activity.sahodaya+(activity.ballots||0)+activity.electionCodes+activity.browserVoterFlags;
     return `<div class="admin-intro"><h2>Import, export &amp; backup</h2><p>Manage the school records in this browser's local working copy. Back up the data before restoring it or clearing an academic year's activity.</p></div>
@@ -2406,7 +2432,6 @@
         <section class="settings-card"><h3>Full browser backup</h3><p>Download all local portal data, including students, staff, programme records, registrations, results, events and election configuration.</p><div class="form-actions"><button class="btn btn-secondary" type="button" data-action="backup-export">Download JSON backup</button><button class="btn btn-quiet" type="button" data-action="backup-import">Restore JSON backup</button></div><input id="backup-file" type="file" accept=".json,application/json" hidden><small class="table-subline">Restore replaces the current browser data after validation and confirmation. Keep a separate copy of your current backup.</small></section>
         <section class="settings-card"><h3>Export school records</h3><p>Download the programme catalogue, full registration list and activity audit log.</p><div class="form-actions"><button class="btn btn-secondary" type="button" data-action="programme-export">Programmes · CSV</button><button class="btn btn-secondary" type="button" data-action="programme-export-xlsx">Programmes · Excel</button><button class="btn btn-secondary" type="button" data-action="registration-export">Registrations · CSV</button><button class="btn btn-secondary" type="button" data-action="registration-export-xlsx">Registrations · Excel</button><button class="btn btn-quiet" type="button" data-action="audit-export">Audit log · JSON</button></div></section>
         <section class="settings-card"><h3>Prepare for a new school year</h3><p>Clear annual programme registrations and results without rebuilding the school directory or configuring the portal again.</p><div class="report-summary"><div class="report-tile"><strong>${activity.registrations}</strong><small>Programme registrations</small></div><div class="report-tile"><strong>${activity.ranks+activity.sahodaya}</strong><small>Programme outcomes</small></div><div class="report-tile"><strong>${activity.ballots===null?'Review required':activity.ballots}</strong><small>Election ballots</small></div></div><div class="warning-box">This removes programme registrations, school ranks, Sahodaya selections and local election ballots. Voter codes are not issued or verified in this build. Student and setup records stay in place. Back up first.</div><div class="form-actions"><button class="btn btn-danger" type="button" data-action="annual-data-reset">Clear annual registrations &amp; results</button></div><small class="table-subline">${activityTotal} activity records are currently linked to this year's programme and election workflows. Elections return to Draft; their positions and candidates are kept.</small></section>
-        <section class="settings-card"><h3>Local data status</h3><div class="report-summary"><div class="report-tile"><strong>${activeStudents}</strong><small>Active students</small></div><div class="report-tile"><strong>${archivedStudents}</strong><small>Archived students</small></div><div class="report-tile"><strong>${records}</strong><small>Total student records</small></div></div><p>${sharedStorage.status==='connected'?'The demo workspace is connected to Supabase and synchronises between devices.':sharedStorage.status==='needs-reset'?'This browser has local changes that are not yet shared. Publish this browser demo data below to preserve the latest settings and connect this copy.':'The browser currently holds a local copy. Publish its fictional demo data below to make it the shared workspace.'}</p>${sharedStorage.status!=='connected'?'<div class="warning-box">Publishing replaces the shared online demo workspace for every device with the data currently saved in this browser. Only publish fictional test data. Export a backup first.</div><div class="form-actions"><button class="btn btn-primary" type="button" data-action="shared-publish-local">Publish this browser demo data</button></div>':''}<div class="form-actions"><button class="btn btn-secondary" type="button" data-action="shared-load-cloud">Load shared demo data to this browser</button></div><div class="warning-box">The demo reset below replaces the entire local working copy with fictional sample data. It is different from the annual activity reset above.</div><div class="form-actions"><button class="btn btn-danger" type="button" data-action="demo-reset">Replace with fictional demo data</button></div></section>
       </div>`;
   }
 
