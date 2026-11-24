@@ -238,13 +238,13 @@
       if(!remoteResponse.ok) throw new Error('Could not read the shared workspace ('+remoteResponse.status+').');
       const remoteRows=await remoteResponse.json();
       const localKeys=new Set(localRows.map(row=>row.key));
+      const writeResponse=await fetch(sharedStorage.endpoint+'?on_conflict=key',{method:'POST',headers:sharedStorageHeaders({'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(localRows)});
+      if(!writeResponse.ok) throw new Error('Supabase rejected the demo workspace ('+writeResponse.status+').');
       for(const row of remoteRows){
         if(!row||!isSharedStorageKey(row.key)||localKeys.has(row.key)) continue;
         const removeResponse=await fetch(sharedStorage.endpoint+'?key=eq.'+encodeURIComponent(row.key),{method:'DELETE',headers:sharedStorageHeaders({Prefer:'return=minimal'})});
         if(!removeResponse.ok) throw new Error('Could not replace an older shared record ('+removeResponse.status+').');
       }
-      const writeResponse=await fetch(sharedStorage.endpoint+'?on_conflict=key',{method:'POST',headers:sharedStorageHeaders({'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(localRows)});
-      if(!writeResponse.ok) throw new Error('Supabase rejected the demo workspace ('+writeResponse.status+').');
       const verifyResponse=await fetch(readUrl,{headers:sharedStorageHeaders(),cache:'no-store'});
       if(!verifyResponse.ok) throw new Error('The published workspace could not be verified ('+verifyResponse.status+').');
       const verifiedRows=await verifyResponse.json();
@@ -929,9 +929,12 @@
     }else if(sharedStorage.status==='connecting'){
       strong.textContent='Connecting shared workspace';
       small.textContent='Checking Supabase connection…';
+    }else if(sharedStorage.status==='syncing'){
+      strong.textContent='Updating shared workspace';
+      small.textContent='Publishing or loading demo data…';
     }else if(sharedStorage.status==='needs-reset'){
-      strong.textContent='Trial setup needs reset';
-      small.textContent='Replace this browser data with fictional demo data to sync';
+      strong.textContent='Local data not yet shared';
+      small.textContent='Publish this copy or load the shared demo data';
     }else if(sharedStorage.status==='error'){
       strong.textContent='Shared sync unavailable';
       small.textContent='This browser is currently working locally';
