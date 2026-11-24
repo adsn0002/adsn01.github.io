@@ -203,6 +203,21 @@
       sharedStorage.polling=false;
     }
   }
+  function activateSharedStorageFromCurrentBrowser() {
+    if (sharedStorage.status!=='needs-reset') return;
+    sharedStorage.ready=true;
+    sharedStorage.status='connected';
+    sharedStorage.warned=false;
+    for (const key of storageKeys()) {
+      if (!isSharedStorageKey(key)) continue;
+      const value=storageGet(key);
+      if (value!==null) sharedStorage.pending.set(key,value);
+    }
+    if (!sharedStorage.pollTimer) sharedStorage.pollTimer=setInterval(pollSharedStorage,4000);
+    if (sharedStorage.pending.size&&!sharedStorage.flushTimer)
+      sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,80);
+    updateStorageStatus();
+  }
   async function initializeSharedStorage() {
     const config=window.PORTAL_SUPABASE_CONFIG;
     if (!config?.url || !config?.publishableKey) {
@@ -218,29 +233,30 @@
       });
       if (!response.ok) throw new Error(`Supabase connection failed (${response.status}).`);
       const rows=await response.json();
+      const localEntries=storageKeys().filter(isSharedStorageKey)
+        .map(key=>[key,storageGet(key)]).filter(([,value])=>value!==null);
+      const remoteMap=new Map(rows.filter(row=>row&&isSharedStorageKey(row.key))
+        .map(row=>[row.key,row]));
+      const localMap=new Map(localEntries);
+      const hasConflict=rows.length
+        ? (localEntries.some(([key,value])=>!remoteMap.has(key)||remoteMap.get(key).value!==value)
+          || rows.some(row=>isSharedStorageKey(row.key)&&!localMap.has(row.key)))
+        : localEntries.length>0;
+      if (hasConflict) {
+        // Never upload, overwrite or merge browser-local school data implicitly.
+        sharedStorage.status='needs-reset';
+        updateStorageStatus();
+        return;
+      }
       if (rows.length) {
-        const remoteKeys=new Set();
         for (const row of rows) {
           if (!row || !isSharedStorageKey(row.key)) continue;
-          remoteKeys.add(row.key);
           setLocalStorageSilently(row.key,row.value);
           sharedStorage.lastSeen.set(row.key,row.updated_at);
-        }
-        for (const key of storageKeys()) {
-          if (isSharedStorageKey(key)&&!remoteKeys.has(key)) removeLocalStorageSilently(key);
         }
       }
       sharedStorage.ready=true;
       sharedStorage.status='connected';
-      if (!rows.length) {
-        // The first device seeds the empty trial workspace from its current test copy.
-        for (const key of storageKeys()) {
-          if (!isSharedStorageKey(key)) continue;
-          const value=storageGet(key);
-          if (value!==null) sharedStorage.pending.set(key,value);
-        }
-        if (sharedStorage.pending.size) sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,80);
-      }
       sharedStorage.pollTimer=setInterval(pollSharedStorage,4000);
       updateStorageStatus();
     } catch (error) {
@@ -807,6 +823,9 @@
     }else if(sharedStorage.status==='connecting'){
       strong.textContent='Connecting shared workspace';
       small.textContent='Checking Supabase connection…';
+    }else if(sharedStorage.status==='needs-reset'){
+      strong.textContent='Trial setup needs reset';
+      small.textContent='Replace this browser data with fictional demo data to sync';
     }else if(sharedStorage.status==='error'){
       strong.textContent='Shared sync unavailable';
       small.textContent='This browser is currently working locally';
@@ -2903,7 +2922,8 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
           render();return toast(restored?'Demo reset failed. The previous school data was restored.':'Demo reset failed and rollback could not be verified. Stop editing and restore a known-good backup.','error');
         }
         for(const oldElection of oldElections)clearBrowserVoterFlags(oldElection.id,oldElection.publicKey);
-        state.adminTab='overview';state.page='dashboard';state.role='admin';state.selectedStudentId=4;render();toast('Demo workspace replaced with fictional sample data.');
+        activateSharedStorageFromCurrentBrowser();
+        state.adminTab='overview';state.page='dashboard';state.role='admin';state.selectedStudentId=4;render();toast(sharedStorage.status==='connected'?'Fictional demo workspace replaced and shared sync enabled.':'Demo workspace replaced with fictional sample data.');
       }break;
       case 'backup-import':$('#backup-file')?.click();break;
       case 'election-add':openModal('Create election',createElectionForm(),'ELECTION SETUP');break;
