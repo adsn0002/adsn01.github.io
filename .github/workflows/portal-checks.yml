@@ -1,0 +1,29 @@
+name: Portal regression checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run static regression checks
+        run: python test_portal_static.py
+      - name: Run UI and layout regression checks
+        run: python test_ui_layout.py
+      - name: Run local server security checks
+        run: python test_security_server.py
