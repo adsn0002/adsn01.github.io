@@ -2234,6 +2234,9 @@
         <div class="admin-overview-year"><span>ACADEMIC YEAR</span><strong>${esc(db.settings.academicYear||'Not set')}</strong><small>Local working copy</small></div>
         <span class="admin-hero-light" aria-hidden="true"></span>
       </header>
+      <section class="admin-home-card admin-sync-entry" style="margin-bottom:16px">
+        <header class="admin-home-card-head"><div><p class="admin-section-kicker">ONLINE DEMO</p><h2>Shared demo &amp; device sync</h2><p>Publish this browser’s demo data or load the shared version on this device.</p></div><button class="btn btn-primary" type="button" data-action="admin-tab" data-tab="sync">Open sync controls</button></header>
+      </section>
       <div class="admin-stats-strip" aria-label="School summary">
         <div><span>Active students</span><strong>${activeStudents.length}</strong><small>In the register</small></div>
         <div><span>Active programmes</span><strong>${activeProgrammes.length}</strong><small>Available catalogue</small></div>
