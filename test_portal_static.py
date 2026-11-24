@@ -90,7 +90,7 @@ check('initial load, polling, explicit load and publish verification all use pag
 check('atomic publish ceiling matches the paginated reader and has a migration', 'jsonb_array_length(p_rows) > 10000' in supabase_setup and 'jsonb_array_length(p_rows) > 10000' in expanded_migration)
 publish_function=app[app.index('async function publishLocalBrowserWorkspace'):app.index('async function loadSharedWorkspaceIntoCurrentBrowser')]
 check('shared workspace publishing uses one atomic Supabase RPC', "portal_storage_replace_workspace" in publish_function and "const writeResponse=await fetch(rpcUrl" in publish_function and "for(const row of remoteRows)" not in publish_function)
-check('atomic publish RPC is SECURITY INVOKER and validates payload size', 'security invoker' in supabase_setup.lower() and 'octet_length(item->>\'value\') > 2000000' in supabase_setup and 'jsonb_array_length(p_rows) > 1000' in supabase_setup)
+check('atomic publish RPC is SECURITY INVOKER and validates payload size', 'security invoker' in supabase_setup.lower() and 'octet_length(item->>\'value\') > 2000000' in supabase_setup and 'jsonb_array_length(p_rows) > 10000' in supabase_setup)
 check('database setup narrows anonymous grants and removes truncate/trigger/reference', 'revoke truncate, references, trigger on table public.portal_storage from anon' in supabase_setup and 'revoke all privileges on table public.portal_storage from authenticated' in supabase_setup)
 check('database setup constrains storage key format and value size', 'portal_storage_key_format_check' in supabase_setup and 'portal_storage_value_size_check' in supabase_setup)
 check('local launcher serves the Supabase browser config', '"supabase-config.js"' in server)
