@@ -218,6 +218,52 @@
       sharedStorage.flushTimer=setTimeout(flushSharedStorageWrites,80);
     updateStorageStatus();
   }
+  async function publishLocalBrowserWorkspace() {
+    if (!isAdmin()) return toast('Administrator access required.','error');
+    if (!sharedStorage.endpoint || !sharedStorage.publishableKey) return toast('Supabase is not configured in this browser.','error');
+    if (!confirm('Publish this browser\'s current portal data to the shared online demo? This replaces the shared demo workspace for every device, including students, staff, programmes, registrations, settings and election setup. The description you just saved will be included. Only continue when this browser contains fictional test data. Export a backup first. Continue?')) return;
+    const button=$('[data-action="shared-publish-local"]');
+    if(button){button.disabled=true;button.textContent='Publishing demo data…';}
+    sharedStorage.ready=false; sharedStorage.status='syncing'; sharedStorage.warned=false;
+    if(sharedStorage.flushTimer){clearTimeout(sharedStorage.flushTimer);sharedStorage.flushTimer=null;}
+    sharedStorage.pending.clear(); updateStorageStatus();
+    try {
+      const localRows=storageKeys().filter(isSharedStorageKey).map(key=>({key,value:storageGet(key)})).filter(row=>row.value!==null);
+      const localMain=localRows.find(row=>row.key===KEY);
+      if(!localMain) throw new Error('This browser has no saved portal workspace to publish.');
+      const parsedMain=JSON.parse(localMain.value);
+      if(!parsedMain||typeof parsedMain!=='object'||!parsedMain.settings||!Array.isArray(parsedMain.students)||!Array.isArray(parsedMain.programmes)) throw new Error('The local portal data did not pass the workspace structure check. Nothing was published.');
+      const readUrl=sharedStorage.endpoint+'?select=key,value,updated_at&order=key.asc';
+      const remoteResponse=await fetch(readUrl,{headers:sharedStorageHeaders(),cache:'no-store'});
+      if(!remoteResponse.ok) throw new Error('Could not read the shared workspace ('+remoteResponse.status+').');
+      const remoteRows=await remoteResponse.json();
+      const localKeys=new Set(localRows.map(row=>row.key));
+      for(const row of remoteRows){
+        if(!row||!isSharedStorageKey(row.key)||localKeys.has(row.key)) continue;
+        const removeResponse=await fetch(sharedStorage.endpoint+'?key=eq.'+encodeURIComponent(row.key),{method:'DELETE',headers:sharedStorageHeaders({Prefer:'return=minimal'})});
+        if(!removeResponse.ok) throw new Error('Could not replace an older shared record ('+removeResponse.status+').');
+      }
+      const writeResponse=await fetch(sharedStorage.endpoint+'?on_conflict=key',{method:'POST',headers:sharedStorageHeaders({'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(localRows)});
+      if(!writeResponse.ok) throw new Error('Supabase rejected the demo workspace ('+writeResponse.status+').');
+      const verifyResponse=await fetch(readUrl,{headers:sharedStorageHeaders(),cache:'no-store'});
+      if(!verifyResponse.ok) throw new Error('The published workspace could not be verified ('+verifyResponse.status+').');
+      const verifiedRows=await verifyResponse.json();
+      const verifiedMap=new Map(verifiedRows.filter(row=>row&&isSharedStorageKey(row.key)).map(row=>[row.key,row]));
+      if(verifiedMap.size!==localRows.length||localRows.some(row=>verifiedMap.get(row.key)?.value!==row.value)) throw new Error('The cloud data did not match this browser after publishing.');
+      sharedStorage.lastSeen.clear();
+      for(const row of verifiedRows) if(row&&isSharedStorageKey(row.key)) sharedStorage.lastSeen.set(row.key,row.updated_at);
+      sharedStorage.pending.clear(); sharedStorage.ready=true; sharedStorage.status='connected'; sharedStorage.warned=false;
+      if(!sharedStorage.pollTimer) sharedStorage.pollTimer=setInterval(pollSharedStorage,4000);
+      updateStorageStatus(); render();
+      toast('Demo workspace published. The saved school description and other demo data are now shared across devices.');
+    } catch(error) {
+      sharedStorage.ready=false; sharedStorage.status='error'; updateStorageStatus();
+      console.warn('Could not publish the local demo workspace:',error);
+      toast('Shared publishing failed. Your browser local data was kept. '+(error.message||'Check the Supabase connection and try again.'),'error');
+    } finally {
+      if(button){button.disabled=false;button.textContent='Publish this browser demo data';}
+    }
+  }
   async function initializeSharedStorage() {
     const config=window.PORTAL_SUPABASE_CONFIG;
     if (!config?.url || !config?.publishableKey) {
@@ -2746,7 +2792,7 @@
 
   function handleAction(action, el) {
     if(databaseRecoveryError&&action!=='backup-import'&&action!=='fullscreen')return toast('The saved school data needs recovery. Restore a valid backup before using the portal.','error');
-    const adminOnly = new Set(['admin-back-to-portal','account-panel','admin-tab','student-show-archived','student-restore','student-import','programme-add','programme-edit','programme-archive','programme-restore','programme-duplicate','result-manage','rank-edit','rank-clear','event-add','event-edit','event-delete','staff-add','staff-edit','staff-disable','teacher-manage-powers','house-apply-selected','house-select-all','house-select-student','student-move-selected','student-move-one','student-move-picked','programme-export','registration-export','audit-export','backup-export','backup-import','demo-reset','annual-data-reset','election-add','election-toggle','election-select-admin','election-copy-vote-link','election-copy-live-link','election-open-vote-link','election-open-live-link','election-codes','election-codes-revoke','position-add','position-candidate-add','position-remove','candidate-remove','candidate-edit','participation-manager-export','participation-manager-export-xlsx','participation-manager-clear','deadline-select-all','deadline-select-none','results-filter-clear','programme-export-xlsx','registration-export-xlsx','admin-registration-add']);
+    const adminOnly = new Set(['admin-back-to-portal','account-panel','admin-tab','student-show-archived','student-restore','student-import','programme-add','programme-edit','programme-archive','programme-restore','programme-duplicate','result-manage','rank-edit','rank-clear','event-add','event-edit','event-delete','staff-add','staff-edit','staff-disable','teacher-manage-powers','house-apply-selected','house-select-all','house-select-student','student-move-selected','student-move-one','student-move-picked','programme-export','registration-export','audit-export','backup-export','backup-import','shared-publish-local','demo-reset','annual-data-reset','election-add','election-toggle','election-select-admin','election-copy-vote-link','election-copy-live-link','election-open-vote-link','election-open-live-link','election-codes','election-codes-revoke','position-add','position-candidate-add','position-remove','candidate-remove','candidate-edit','participation-manager-export','participation-manager-export-xlsx','participation-manager-clear','deadline-select-all','deadline-select-none','results-filter-clear','programme-export-xlsx','registration-export-xlsx','admin-registration-add']);
     if (adminOnly.has(action) && !isAdmin()) { toast('This action is available to administrators only.', 'error'); return; }
     if (action === 'student-export' && !['admin','teacher'].includes(state.role)) { toast('Directory export is not available to this role.', 'error'); return; }
     if (action === 'navigate' && !pageAllowed(el.dataset.page)) { toast('This workspace is not available to the selected role.', 'warning'); return; }
@@ -2910,6 +2956,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
       case 'audit-export':downloadJSON(db.audit,'school-portal-audit.json');break;
       case 'backup-export':{const backupElections=JSON.parse(JSON.stringify(electionDb.elections)).map(e=>({...e,ballots:readElectionBallots(e.id)}));downloadJSON({...JSON.parse(JSON.stringify(db)),elections:backupElections,nextIds:{...db.nextIds,...electionDb.nextIds}},'school-portal-backup.json');toast('Backup downloaded.');}break;
       case 'annual-data-reset':if(isAdmin())openModal('Clear annual registrations & results',annualDataResetForm(),'YEAR-END DATA RESET');break;
+      case 'shared-publish-local':if(isAdmin())publishLocalBrowserWorkspace();break;
       case 'demo-reset':if(isAdmin()&&confirm('Replace the entire browser workspace with the original fictional sample data? This will delete current students, accounts, settings, programmes, events and activity records. Export a backup first.')){
         let storageSnapshot;try{storageSnapshot=snapshotPortalDataStorage();}catch(error){return toast(`Demo reset stopped before changing data: ${error.message}`,'error');}
         const previousDatabase=JSON.stringify(db),previousElection=JSON.stringify(electionDb),previousSections=[...sections],previousRecovery=electionRecoveryError;
@@ -3088,7 +3135,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
       if(!values.dashboardTitle)return toast('The main screen heading cannot be blank.','error');
       if(values.dashboardEyebrow.length>60||values.dashboardTitle.length>140||values.dashboardDescription.length>320||values.dashboardQuote.length>140||Object.values(values).some(value=>/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)))return toast('Main screen text exceeds its length limit or contains unsupported control characters.','error');
       Object.assign(db.settings,values);
-      audit('dashboard_content_updated','Main screen','Overview heading and text updated');if(!saveDatabase())return toast('Main screen text could not be saved. The previous saved text was restored.','error');render();toast('Main screen text saved.');return;
+      audit('dashboard_content_updated','Main screen','Overview heading and text updated');if(!saveDatabase())return toast('Main screen text could not be saved. The previous saved text was restored.','error');render();toast(sharedStorage.status==='connected'?'Main screen text saved. It will sync to other devices.':'Main screen text saved on this browser only. Publish this browser demo data from Administration → Local data status to share it.','warning');return;
     }
     if(type==='house-settings') {
       if(!isAdmin())return toast('Administrator access required.','error');
