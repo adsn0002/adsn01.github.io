@@ -63,6 +63,10 @@
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-status"><i></i><span><strong>Local working copy</strong><small>Changes saved in this browser</small></span></div>
+        <div class="workspace-switcher sidebar-workspace-switcher" aria-label="Workspace preview controls">
+          <label class="workspace-switcher-field"><span>Switch workspace</span><select id="role-preview" data-workspace-role aria-label="Choose workspace role"><option value="admin">Administrator</option><option value="teacher">Teacher</option><option value="parent">Parent</option></select></label>
+          <label class="workspace-switcher-field" data-workspace-account-wrap><span>Preview account</span><select id="preview-account" data-preview-account aria-label="Choose preview account"></select></label>
+        </div>
         <div class="sidebar-user">
           <div class="avatar" id="sidebar-avatar">AD</div>
           <div class="sidebar-user-text"><strong id="sidebar-user-name">Portal Administrator</strong><small id="sidebar-user-role">Administrator</small></div>
@@ -81,8 +85,6 @@
           <div class="global-search"><span class="global-search-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg></span><input id="global-search" type="search" placeholder="Search students by name or admission ID…" aria-label="Search students by name or admission ID"><kbd>↵</kbd></div>
           <span class="year-pill" id="year-pill">2026–27</span>
           <button class="icon-button theme-toggle" id="theme-toggle" aria-label="Switch to dark theme" title="Switch theme"><span id="theme-symbol"><svg class="ui-icon" aria-hidden="true"><use href="#icon-moon"></use></svg></span></button>
-          <label class="role-preview" id="role-preview-wrap"><span>Workspace</span><select id="role-preview" aria-label="Choose workspace role"><option value="admin">Administrator</option><option value="teacher">Teacher</option><option value="parent">Parent</option></select></label>
-          <label class="role-preview account-preview" id="preview-account-wrap"><span>Account</span><select id="preview-account" aria-label="Choose preview account"></select></label>
           <div class="top-user"><div class="avatar avatar-small" id="top-avatar">AD</div><div class="top-user-copy"><strong id="top-user-name">Portal Administrator</strong><small id="top-user-role">Administrator</small></div></div>
         </div>
       </header>

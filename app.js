@@ -46,11 +46,31 @@
   const BALLOT_CHUNK_SIZE = 250;
   const THEME_KEY = 'school-arts-sports-theme';
   const THEME_DEFAULT_VERSION_KEY = 'school-arts-sports-theme-default-version';
+  // Keep a session-only overlay for writes/removals that localStorage rejects.
+  // A quota failure can leave getItem() working while setItem() fails, so cached
+  // values must take precedence over stale persistent values for the rest of this tab.
   const memoryStorage = new Map();
+  const memoryStorageOverrides = new Set();
+  const memoryStorageRemoved = new Set();
   let persistentStorageAvailable = true;
   let storageWarningShown = false;
   let databaseRecoveryError = null;
+  function storageKeys() {
+    const keys=new Set();
+    try {
+      const store=window.localStorage;
+      for(let index=0;index<store.length;index++){
+        const key=store.key(index);
+        if(typeof key==='string')keys.add(key);
+      }
+    } catch { persistentStorageAvailable=false; }
+    for(const key of memoryStorage.keys())keys.add(key);
+    for(const key of memoryStorageRemoved)keys.delete(key);
+    return [...keys];
+  }
   function storageGet(key) {
+    if(memoryStorageRemoved.has(key))return null;
+    if(memoryStorageOverrides.has(key))return memoryStorage.has(key)?memoryStorage.get(key):null;
     try {
       const value=window.localStorage.getItem(key);
       if(value===null) memoryStorage.delete(key); else memoryStorage.set(key,value);
@@ -66,16 +86,34 @@
     try {
       window.localStorage.setItem(key,text);
       memoryStorage.set(key,text);
+      memoryStorageOverrides.delete(key);
+      memoryStorageRemoved.delete(key);
       if(key===KEY)persistentStorageAvailable=true;
       return true;
     } catch {
       persistentStorageAvailable=false;
-      return false;
+      try {
+        memoryStorage.set(key,text);
+        memoryStorageOverrides.add(key);
+        memoryStorageRemoved.delete(key);
+        return true;
+      } catch { return false; }
     }
   }
   function storageRemove(key) {
-    try { window.localStorage.removeItem(key); memoryStorage.delete(key); return true; }
-    catch { persistentStorageAvailable=false; return false; }
+    try {
+      window.localStorage.removeItem(key);
+      memoryStorage.delete(key);
+      memoryStorageOverrides.delete(key);
+      memoryStorageRemoved.delete(key);
+      return true;
+    } catch {
+      persistentStorageAvailable=false;
+      memoryStorage.delete(key);
+      memoryStorageOverrides.delete(key);
+      memoryStorageRemoved.add(key);
+      return true;
+    }
   }
   let electionRecoveryError=null;
   let classes = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -94,7 +132,9 @@
   if (Array.isArray(db.settings?.sections) && db.settings.sections.length) sections = db.settings.sections;
   const savedThemePreference = storageGet(THEME_KEY);
   const themeDefaultVersion = storageGet(THEME_DEFAULT_VERSION_KEY);
-  let savedTheme = themeDefaultVersion === '2' && savedThemePreference ? savedThemePreference : 'dark';
+  // v18.7 migrates the previous default-dark setup to light once. After this
+  // migration, explicit user theme choices are remembered across launches.
+  let savedTheme = themeDefaultVersion === '3' && savedThemePreference ? savedThemePreference : 'light';
   const state = {
     page: 'dashboard', role: 'admin', previewUserId: 1, selectedStudentId: 6, programmeId: null,
     studentFilters: {}, programmeFilters: {}, reportFilters: {}, reportPrint: {area:'Sports', programme:'', q:'', age:'', gender:'', classNo:'', section:'', house:'', category:'', customStudentIds:[], columns:['name','admission','age','dob','gender','class','section','house','category']},
@@ -312,7 +352,11 @@
     }
     if (data.settings) data.settings.publishParticipants = false; // Parent views never expose participant rosters.
     data.groupTeams=data.groupTeams.filter(team=>team&&Number.isSafeInteger(Number(team.id))&&Number.isSafeInteger(Number(team.programmeId))&&team.mode==='house'&&String(team.house||'')&&Array.isArray(team.studentIds)).map(team=>({...team,id:Number(team.id),programmeId:Number(team.programmeId),mode:'house',category:String(team.category||''),house:String(team.house||''),studentIds:[...new Set(team.studentIds.map(Number).filter(Number.isSafeInteger))]}));
-    for (const election of data.elections || []) if (election && !election.publicKey) election.publicKey = `legacy-poll-${election.id}`;
+    for (const election of data.elections || []) if (election && typeof election === 'object') {
+      if (!election.publicKey) election.publicKey = `legacy-poll-${election.id}`;
+      if (typeof election.showLive !== 'boolean') election.showLive = true;
+      if (typeof election.allowAbstain !== 'boolean') election.allowAbstain = true;
+    }
     return data;
   }
   function normalizeElectionStore(elections=[], nextIds={}) {
@@ -324,6 +368,8 @@
       if(!Array.isArray(election.ballots))election.ballots=[];
       if(!Array.isArray(election.tokens))election.tokens=[];
       if(!Array.isArray(election.usedTokens))election.usedTokens=[];
+      if(typeof election.showLive!=='boolean')election.showLive=true;
+      if(typeof election.allowAbstain!=='boolean')election.allowAbstain=true;
     }
     const maxPosition=Math.max(0,...safe.flatMap(e=>(e.positions||[]).map(p=>Number(p?.id)||0)));
     const maxCandidate=Math.max(0,...safe.flatMap(e=>(e.positions||[]).flatMap(p=>(p.candidates||[]).map(c=>Number(c?.id)||0))));
@@ -341,8 +387,7 @@
       if(raw===null){
         const prefix=`${BALLOT_CHUNK_PREFIX}${Number(electionId)}-`;
         let orphaned=false;
-        try{orphaned=Object.keys(localStorage).some(key=>key.startsWith(prefix));}catch{}
-        if(!orphaned)orphaned=[...memoryStorage.keys()].some(key=>key.startsWith(prefix));
+        orphaned=storageKeys().some(key=>key.startsWith(prefix));
         return orphaned?{count:0,lastChunk:0,corrupt:true}:{count:0,lastChunk:0,missing:true};
       }
       const parsed=JSON.parse(raw),count=Number(parsed?.count),lastChunk=Number(parsed?.lastChunk);
@@ -432,13 +477,11 @@
   }
   function clearElectionBallotChunks(electionId){
     const prefix=`${BALLOT_CHUNK_PREFIX}${Number(electionId)}-`;
-    let keys=[];
-    try{keys=Object.keys(localStorage).filter(key=>key.startsWith(prefix));}catch{return false;}
-    for(const key of memoryStorage.keys())if(key.startsWith(prefix)&&!keys.includes(key))keys.push(key);
+    const keys=storageKeys().filter(key=>key.startsWith(prefix));
     if(keys.length>MAX_ELECTION_BALLOT_CHUNKS+1)return false;
     keys.push(electionBallotMetaKey(electionId),electionBallotKey(electionId),electionSummaryKey(electionId));
     for(const key of new Set(keys))if(!storageRemove(key))return false;
-    try{return !Object.keys(localStorage).some(key=>key.startsWith(prefix)||key===electionBallotMetaKey(electionId)||key===electionBallotKey(electionId)||key===electionSummaryKey(electionId));}catch{return false;}
+    return !storageKeys().some(key=>key.startsWith(prefix)||key===electionBallotMetaKey(electionId)||key===electionBallotKey(electionId)||key===electionSummaryKey(electionId));
   }
   function electionIndexRecord(e){
     return {id:e.id,title:e.title,status:e.status,publicKey:e.publicKey,openAt:e.openAt,closeAt:e.closeAt,showLive:e.showLive,allowAbstain:e.allowAbstain,eligibleClasses:[...(e.eligibleClasses||classes)]};
@@ -448,11 +491,11 @@
     const prefixes=[ELECTION_INDEX_KEY,ELECTION_KEY,ELECTION_CONFIG_PREFIX,ELECTION_PUBLIC_CONFIG_PREFIX];
     const snapshot=new Map();
     try{
-      for(const key of Object.keys(localStorage))if(prefixes.some(prefix=>key===prefix||key.startsWith(prefix)))snapshot.set(key,localStorage.getItem(key));
+      for(const key of storageKeys())if(prefixes.some(prefix=>key===prefix||key.startsWith(prefix))){const value=storageGet(key);if(value!==null)snapshot.set(key,value);}
     }catch{persistentStorageAvailable=false;return false;}
     for(const [key,value] of memoryStorage)if(prefixes.some(prefix=>key===prefix||key.startsWith(prefix))&&!snapshot.has(key))snapshot.set(key,value);
     const restore=()=>{
-      let ok=true;let current=[];try{current=Object.keys(localStorage).filter(key=>prefixes.some(prefix=>key===prefix||key.startsWith(prefix)));}catch{return false;}
+      let ok=true;const current=storageKeys().filter(key=>prefixes.some(prefix=>key===prefix||key.startsWith(prefix)));
       for(const key of current)if(!snapshot.has(key)&&!storageRemove(key))ok=false;
       for(const [key,value] of snapshot)if(!storageSet(key,value))ok=false;
       for(const key of [...memoryStorage.keys()])if(prefixes.some(prefix=>key===prefix||key.startsWith(prefix))&&!snapshot.has(key))memoryStorage.delete(key);
@@ -469,7 +512,7 @@
         const publicConfig={id:election.id,title:election.title,status:election.status,publicKey:election.publicKey,openAt:election.openAt,closeAt:election.closeAt,showLive:election.showLive===true,allowAbstain:election.allowAbstain!==false,schoolName:db.settings?.schoolName||'School',positions:(election.positions||[]).map(position=>({id:position.id,name:position.name,candidates:(position.candidates||[]).map(candidate=>({id:candidate.id,name:candidate.name,classLabel:candidate.classLabel||'',details:candidate.details||''}))}))};
         if(!storageSet(electionPublicConfigKey(election.id),JSON.stringify(publicConfig)))throw new Error('Public election configuration could not be saved.');
       }
-      for(const key of [...Object.keys(localStorage),...memoryStorage.keys()]){
+      for(const key of storageKeys()){
         if((key.startsWith(ELECTION_CONFIG_PREFIX)&&!activeIds.has(Number(key.slice(ELECTION_CONFIG_PREFIX.length))))||(key.startsWith(ELECTION_PUBLIC_CONFIG_PREFIX)&&!activeIds.has(Number(key.slice(ELECTION_PUBLIC_CONFIG_PREFIX.length)))))if(!storageRemove(key))throw new Error('An obsolete election configuration could not be removed.');
       }
       if(!storageRemove(ELECTION_KEY))throw new Error('Legacy election data could not be removed.');
@@ -542,7 +585,7 @@
   function saveDatabase() {
     if(databaseRecoveryError){updateStorageStatus();return false;}
     let previousRaw=null;
-    try{previousRaw=window.localStorage.getItem(KEY);}catch{previousRaw=memoryStorage.get(KEY)??null;}
+    previousRaw=storageGet(KEY);
     const mainSnapshot=JSON.parse(JSON.stringify(db)); delete mainSnapshot.elections; if(mainSnapshot.nextIds){delete mainSnapshot.nextIds.election;delete mainSnapshot.nextIds.position;delete mainSnapshot.nextIds.candidate;} const saved=storageSet(KEY,JSON.stringify(mainSnapshot));
     if(!saved&&previousRaw){
       try{
@@ -719,8 +762,18 @@
   function canEditStudent(s) { return isAdmin() || (state.role === 'teacher' && currentTeacherHas('editStudents') && teacherCanAccessStudent(s)); }
   function dateOnly(v) { return v ? String(v).slice(0,10) : ''; }
   function localDateString(d=new Date()) { return schoolDateISO(d); }
+  function validSchoolDateKey(value) {
+    const key=dateOnly(value),match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+    if(!match)return null;
+    const year=Number(match[1]),month=Number(match[2]),day=Number(match[3]);
+    const date=new Date(Date.UTC(year,month-1,day,12));
+    return date.getUTCFullYear()===year&&date.getUTCMonth()===month-1&&date.getUTCDate()===day?{key,date}:null;
+  }
   function formatDate(v, options={ day:'2-digit', month:'short', year:'numeric' }) {
-    if (!v) return 'Not set'; const d = new Date(`${dateOnly(v)}T00:00:00`); return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', options);
+    if (!v) return 'Not set';
+    const parsed=validSchoolDateKey(v);
+    if(!parsed)return String(v);
+    return new Intl.DateTimeFormat('en-IN',{...options,timeZone:SCHOOL_TIME_ZONE}).format(parsed.date);
   }
   function formatTime(v) { return formatSchoolDateTime(v); }
   function badge(text, kind='neutral') { return `<span class="status-pill ${kind==='open'?'status-open':kind==='closed'?'status-closed':kind==='draft'?'status-draft':''}">${esc(text)}</span>`; }
@@ -745,13 +798,14 @@
     $('#sidebar-avatar').textContent = initials(name); $('#top-avatar').textContent = initials(name);
     $('#sidebar-user-name').textContent = name; $('#sidebar-user-role').textContent = roleNames[state.role];
     $('#top-user-name').textContent = name; $('#top-user-role').textContent = roleNames[state.role];
-    $('#role-preview').value = state.role;
     const accountChoices=previewAccounts();
     if(!accountChoices.some(x=>Number(x.id)===Number(state.previewUserId)))state.previewUserId=accountChoices[0]?.id??null;
-    const accountWrap=$('#preview-account-wrap'),accountSelect=$('#preview-account');
-    accountWrap.hidden=!accountChoices.length;
-    accountSelect.innerHTML=accountChoices.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join('');
-    if(state.previewUserId!==null)accountSelect.value=String(state.previewUserId);
+    $$('select[data-workspace-role]').forEach(select=>{select.value=state.role;});
+    $$('[data-workspace-account-wrap]').forEach(wrap=>{wrap.hidden=!accountChoices.length;});
+    $$('select[data-preview-account]').forEach(select=>{
+      select.innerHTML=accountChoices.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join('');
+      if(state.previewUserId!==null)select.value=String(state.previewUserId);
+    });
     $$('[data-roles]').forEach(node => {
       const allowed=node.dataset.roles.split(',').map(role=>role.trim()).includes(state.role);
       node.hidden=!allowed;
@@ -762,7 +816,6 @@
       node.hidden=!allowed;
       node.setAttribute('aria-hidden',String(!allowed));
     });
-    $('#role-preview-wrap').hidden = false;
     $('#global-search').parentElement.hidden = state.role==='parent';
     $('#school-name-nav').textContent = db.settings.schoolName.toUpperCase();
     $('#footer-school').textContent = `${db.settings.schoolName.toUpperCase()} · ACTIVITY MANAGER`;
@@ -885,12 +938,17 @@
   }
   function activeNav() { $$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===state.page || (state.page==='programme-detail' && b.dataset.page===state.programmeArea))); }
   let modalReturnFocus=null;
+  function isActuallyVisible(element) {
+    if(!element||element.disabled||element.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
+    const style=getComputedStyle(element);
+    return style.display!=='none'&&style.visibility!=='hidden'&&element.getClientRects().length>0;
+  }
   function openModal(title, html, kicker='RECORD') {
     const backdrop=$('#modal-backdrop');
     if(backdrop.hidden)modalReturnFocus=document.activeElement;
-    $('#modal-title').textContent=title;$('#modal-kicker').textContent=kicker;$('#modal-body').innerHTML=html;backdrop.hidden=false;document.body.style.overflow='hidden';
-    const target=$('#modal-body input:not([disabled]),#modal-body select:not([disabled]),#modal-body textarea:not([disabled]),#modal-body button:not([disabled])');
-    if(target)setTimeout(()=>target.focus(),30);
+    $('#modal-title').textContent=title;$('#modal-kicker').textContent=kicker;$('#modal-body').innerHTML=html;ensureAccessibleControlLabels($('#modal-body'));backdrop.hidden=false;document.body.style.overflow='hidden';
+    const target=$$('#modal-body input:not([disabled]),#modal-body select:not([disabled]),#modal-body textarea:not([disabled]),#modal-body button:not([disabled])').find(isActuallyVisible);
+    if(target)setTimeout(()=>{if(isActuallyVisible(target))target.focus();},30);
     setTimeout(()=>{syncProgrammeForm();syncStaffForm();},0);
   }
   function closeModal() {
@@ -903,13 +961,13 @@
     if(event.key==='Escape'){event.preventDefault();closeModal();return;}
     if(event.key!=='Tab')return;
     const modal=$('.modal',backdrop);
-    const focusable=$$('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])',modal).filter(element=>!element.hidden&&element.getAttribute('aria-hidden')!=='true');
+    const focusable=$$('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])',modal).filter(isActuallyVisible);
     if(!focusable.length){event.preventDefault();modal?.focus?.();return;}
     const first=focusable[0],last=focusable[focusable.length-1];
     if(event.shiftKey&&(document.activeElement===first||!modal.contains(document.activeElement))){event.preventDefault();last.focus();}
     else if(!event.shiftKey&&(document.activeElement===last||!modal.contains(document.activeElement))){event.preventDefault();first.focus();}
   });
-  function applyTheme(theme) { state.theme=theme==='dark'?'dark':'light'; document.documentElement.dataset.theme=state.theme; const themeMeta=document.querySelector('meta[name="theme-color"]'); if(themeMeta)themeMeta.content=state.theme==='dark'?'#111923':'#F5F1E9'; storageSet(THEME_KEY,state.theme); storageSet(THEME_DEFAULT_VERSION_KEY,'2'); $('#theme-symbol').innerHTML=uiIcon(state.theme==='dark'?'sun':'moon','ui-icon theme-symbol-icon'); $('#theme-toggle').setAttribute('aria-label',state.theme==='dark'?'Switch to light theme':'Switch to dark theme'); updateStorageStatus(); }
+  function applyTheme(theme) { state.theme=theme==='dark'?'dark':'light'; document.documentElement.dataset.theme=state.theme; const themeMeta=document.querySelector('meta[name="theme-color"]'); if(themeMeta)themeMeta.content=state.theme==='dark'?'#111923':'#F5F1E9'; storageSet(THEME_KEY,state.theme); storageSet(THEME_DEFAULT_VERSION_KEY,'3'); $('#theme-symbol').innerHTML=uiIcon(state.theme==='dark'?'sun':'moon','ui-icon theme-symbol-icon'); $('#theme-toggle').setAttribute('aria-label',state.theme==='dark'?'Switch to light theme':'Switch to dark theme'); updateStorageStatus(); }
   function applySchoolBranding() {
     const schoolName=db.settings.schoolName||'Your School';
     const logo=$('#school-logo'); if(logo) logo.src=db.settings.logoDataUrl||'assets/mark.svg';
@@ -929,8 +987,18 @@
       registrationByStudent.get(sid).push(reg);registrationByProgramme.get(pid).push(reg);
     }
   }
-  function recordCount(pid){ensureRegistrationLookups();return (registrationByProgramme.get(Number(pid))||[]).reduce((count,reg)=>count+(studentById(reg.studentId)?.active!==false?1:0),0);}
-  function registrationsFor(sid){ensureRegistrationLookups();return (registrationByStudent.get(Number(sid))||[]).filter(reg=>studentById(sid)?.active!==false);}
+  function recordCount(pid){
+    ensureRegistrationLookups();
+    return (registrationByProgramme.get(Number(pid))||[]).reduce((count,reg)=>{
+      const student=studentById(reg.studentId);
+      return count+(student&&student.active!==false?1:0);
+    },0);
+  }
+  function registrationsFor(sid){
+    ensureRegistrationLookups();
+    const student=studentById(sid);
+    return student&&student.active!==false?(registrationByStudent.get(Number(sid))||[]):[];
+  }
   function isEligible(student,p){
     if(!student||!p||student.active===false||p.archived)return false;
     const classNo=Number(student.classNo),min=Number(p.classMin||1),max=Number(p.classMax||12);
@@ -955,7 +1023,7 @@
     return true;
   }
   function selectedProgrammeCount(student,area,itemType){
-    return registrationsFor(student.id).map(reg=>programmeById(reg.programmeId)).filter(programme=>programme&&programme.area===area&&programme.category!=='Group Item'&&inferProgrammeType(programme.area,programme.category,programme.name,programme.description,programme.itemType)===itemType).length;
+    return registrationsFor(student.id).map(reg=>programmeById(reg.programmeId)).filter(programme=>programme&&!programme.archived&&programme.area===area&&programme.category!=='Group Item'&&inferProgrammeType(programme.area,programme.category,programme.name,programme.description,programme.itemType)===itemType).length;
   }
   function quotaStatus(student, p, options={}) {
     const selected = registrationsFor(student.id).map(r=>programmeById(r.programmeId)).filter(programme=>programme && !programme.archived);
@@ -1139,7 +1207,7 @@
       </div>
       <div class="dashboard-grid">
         <section class="panel"><header class="panel-head"><div><h2>Programme choice deadlines</h2><p>Programmes closing soon</p></div><button class="btn-link" data-action="navigate" data-page="arts">View programmes →</button></header><div class="panel-body"><div class="deadline-list">${deadlines.length?deadlines.map(p=>`<div class="deadline-item"><div><strong>${esc(p.name)} · ${esc(p.category)}</strong><small>${esc(p.area)}${p.gender!=='All'?' · '+esc(p.gender):''}</small></div><span class="deadline-date">Closes ${formatDate(p.closeDate,{day:'2-digit',month:'short'})}</span></div>`).join(''):'<div class="empty-state">No programme choice windows are currently open.</div>'}</div></div></section>
-        <section class="panel"><header class="panel-head"><div><h2>Upcoming events</h2><p>Published school calendar</p></div><button class="btn-link" data-action="navigate" data-page="calendar">Open calendar →</button></header><div class="panel-body"><div class="activity-list">${events.map(e=>`<div class="activity-row"><div class="activity-date"><strong>${new Date(`${e.date}T00:00:00`).getDate()}</strong><small>${formatDate(e.date,{month:'short'} )}</small></div><div class="activity-copy"><strong>${esc(e.title)}</strong><small>${formatDate(e.date)} · ${esc(e.venue)}</small></div><span class="activity-tag">${esc(e.type)}</span></div>`).join('')||'<div class="empty-state">No upcoming events.</div>'}</div></div></section>
+        <section class="panel"><header class="panel-head"><div><h2>Upcoming events</h2><p>Published school calendar</p></div><button class="btn-link" data-action="navigate" data-page="calendar">Open calendar →</button></header><div class="panel-body"><div class="activity-list">${events.map(e=>`<div class="activity-row"><div class="activity-date"><strong>${formatDate(e.date,{day:'numeric'})}</strong><small>${formatDate(e.date,{month:'short'} )}</small></div><div class="activity-copy"><strong>${esc(e.title)}</strong><small>${formatDate(e.date)} · ${esc(e.venue)}</small></div><span class="activity-tag">${esc(e.type)}</span></div>`).join('')||'<div class="empty-state">No upcoming events.</div>'}</div></div></section>
       </div>
       <div class="section-title-row"><div><h2>Activity areas</h2><p>Open a workspace to manage entries and lists.</p></div></div>
       <div class="quick-grid">
@@ -1634,25 +1702,17 @@
     if(!children.length) return `${heading('Overview','This parent account is not linked to an active student record.','PARENT PORTAL')}<div class="panel empty-state"><strong>No linked child</strong><p>Ask the school office to link the correct student record to this parent account.</p></div>`;
     const student=currentLinkedStudent();
     const eligible=db.programmes.filter(p=>p.status!=='draft'&&!p.archived&&isEligible(student,p));
-    const regs=registrationsFor(student.id).map(reg=>({reg,programme:programmeById(reg.programmeId)})).filter(x=>x.programme&&!x.programme.archived);
     const areas=[
       {key:'arts',label:'Arts',desc:'Individual and group performance choices',icon:'palette',items:eligible.filter(p=>p.area==='Arts'&&p.category!=='Group Item')},
       {key:'sports',label:'Sports',desc:'Track, field and other sporting events',icon:'trophy',items:eligible.filter(p=>p.area==='Sports'&&p.category!=='Group Item')},
       {key:'groups',label:'Group Items',desc:'Ensemble and team entries managed by staff',icon:'users-round',items:eligible.filter(p=>p.category==='Group Item')}
     ];
     const childSelect=children.length>1?`<label class="child-switch"><span>Viewing child</span><select class="filter-select" id="parent-child-select">${selectOptions(children.map(x=>({value:x.id,label:`${x.name} · Class ${x.classNo}${x.section}`})),student.id)}</select></label>`:`<span class="year-pill">Class ${esc(student.classNo)}${esc(student.section||'')} · ${esc(catForClass(student.classNo)||'Category not assigned')}</span>`;
-    const recent=regs.slice().sort((a,b)=>String(b.reg.createdAt||'').localeCompare(String(a.reg.createdAt||''))).slice(0,5);
-    const recentRows=recent.map(({reg,programme})=>{
-      const result=db.settings.publishResults?db.results.find(r=>Number(r.programmeId)===Number(programme.id)&&Number(r.studentId)===Number(student.id)):null;
-      return `<tr><td><strong>${esc(programme.name)}</strong></td><td>${esc(programme.area)}</td><td>${formatDate(reg.createdAt)}</td>${db.settings.publishResults?`<td>${result?.rank?`${result.rank}${result.rank===1?'st':result.rank===2?'nd':'rd'} place`:'—'}</td>`:''}</tr>`;
-    }).join('');
     const areaCards=areas.map(area=>`<button type="button" class="parent-area-card" data-action="navigate" data-page="${area.key}"><span class="parent-area-icon">${uiIcon(area.icon)}</span><span class="parent-area-copy"><strong>${area.label}</strong><small>${area.desc}</small><em>${area.items.length} eligible ${area.items.length===1?'item':'items'}</em></span><span class="parent-area-arrow" aria-hidden="true">→</span></button>`).join('');
-    return `${heading('Overview',`Activity summary for ${student.name}. Browse an area to see available items and register your child.`,'PARENT PORTAL',childSelect)}
-      <section class="hero-panel"><div class="hero-copy"><p class="eyebrow">PARENT PORTAL</p><h2>${esc(db.settings.dashboardTitle||'Every student has a place to take part.')}</h2><p>${esc(db.settings.dashboardDescription||'Keep programme choices, event schedules and school results organised in one place. Arts and Sports stay separate; student records stay central.')}</p></div>${db.settings.dashboardQuote?`<div class="hero-meta">“${esc(db.settings.dashboardQuote)}”</div>`:''}</section>
+    return `<section class="hero-panel parent-overview-hero"><div class="hero-copy"><p class="eyebrow">PARENT PORTAL</p><h2>${esc(db.settings.dashboardTitle||'Every student has a place to take part.')}</h2><p>${esc(db.settings.dashboardDescription||'Keep programme choices, event schedules and school results organised in one place. Arts and Sports stay separate; student records stay central.')}</p><div class="parent-hero-context">${childSelect}</div></div>${db.settings.dashboardQuote?`<div class="hero-meta parent-hero-quote">“${esc(db.settings.dashboardQuote)}”</div>`:''}</section>
       ${parentParticipationPanel(student)}
       <section class="parent-explore-section"><header class="parent-section-heading"><div><span class="eyebrow">EXPLORE</span><h2>Choose an activity area</h2><p>Open Arts or Sports to browse programmes. Registration happens inside each area.</p></div></header><div class="parent-area-overview">${areaCards}</div></section>
-      ${db.settings.announcements?`<section class="parent-notice"><span class="eyebrow">SCHOOL NOTICE</span><p>${esc(db.settings.announcements)}</p></section>`:''}
-      <section class="panel parent-recent-panel"><header class="panel-head"><div><h2>Recent registrations</h2><p>Your child’s latest programme entries.</p></div><button class="btn btn-secondary btn-small" data-action="navigate" data-page="portal">View activity record</button></header><div class="table-wrap"><table class="data-table"><thead><tr><th>Programme</th><th>Area</th><th>Added</th>${db.settings.publishResults?'<th>Published result</th>':''}</tr></thead><tbody>${recentRows||`<tr><td colspan="${db.settings.publishResults?4:3}"><div class="empty-state">No programme registrations have been recorded for this child.</div></td></tr>`}</tbody></table></div></section>`;
+      ${db.settings.announcements?`<section class="parent-notice"><span class="eyebrow">SCHOOL NOTICE</span><p>${esc(db.settings.announcements)}</p></section>`:''}`;
   }
 
   function renderPortal() {
@@ -1683,7 +1743,7 @@
       const type=inferProgrammeType(programme.area,programme.category,programme.name,programme.description,programme.itemType);
       const typeLabel=programme.category==='Group Item'?'Group Item':programmeTypeLabel(type);
       const resultText=db.settings.publishResults&&result?.rank?`${result.rank}${result.rank===1?'st':result.rank===2?'nd':'rd'} place`:db.settings.publishResults?'—':'Not published';
-      return `<tr><td><strong>${esc(programme.name)}</strong></td><td>${esc(programme.area)}</td><td>${esc(typeLabel)}</td><td>${formatDate(reg.createdAt)}</td>${db.settings.publishResults?`<td>${esc(resultText)}</td>`:''}</tr>`;
+      return `<tr><td><strong>${esc(programme.name)}</strong></td><td>${esc(programme.area)}</td><td>${esc(typeLabel)}</td>${db.settings.publishResults?`<td>${esc(resultText)}</td>`:''}</tr>`;
     }).join('');
     return `${heading('My child', 'A personal school profile and activity record for the student linked to this parent account.', 'STUDENT PROFILE', childSelect)}
       <section class="child-profile-card" aria-labelledby="child-profile-name">
@@ -1699,7 +1759,7 @@
         </div>
         ${parentParticipationPanel(student,true)}
       </section>
-      <section class="panel child-activity-record"><header class="panel-head"><div><h2>My child’s activity</h2><p>Programme entries recorded for ${esc(student.name)}.</p></div><button class="btn btn-secondary btn-small" data-action="navigate" data-page="dashboard">View overview</button></header><div class="table-wrap"><table class="data-table"><thead><tr><th>Programme</th><th>Area</th><th>Event type</th><th>Added on</th>${db.settings.publishResults?'<th>Rank</th>':''}</tr></thead><tbody>${activityRows||`<tr><td colspan="${db.settings.publishResults?5:4}"><div class="empty-state">No programme activity has been recorded for this child yet.</div></td></tr>`}</tbody></table></div></section>`;
+      <section class="panel child-activity-record"><header class="panel-head"><div><h2>My child’s activity</h2><p>Programme entries recorded for ${esc(student.name)}.</p></div><button class="btn btn-secondary btn-small" data-action="navigate" data-page="dashboard">View overview</button></header><div class="table-wrap"><table class="data-table"><thead><tr><th>Programme</th><th>Area</th><th>Event type</th>${db.settings.publishResults?'<th>Rank</th>':''}</tr></thead><tbody>${activityRows||`<tr><td colspan="${db.settings.publishResults?4:3}"><div class="empty-state">No programme activity has been recorded for this child yet.</div></td></tr>`}</tbody></table></div></section>`;
   }
 
   function makePublicKey(){const bytes=new Uint8Array(18);if(window.crypto?.getRandomValues)window.crypto.getRandomValues(bytes);else for(let i=0;i<bytes.length;i++)bytes[i]=Math.floor(Math.random()*256);return [...bytes].map(x=>x.toString(16).padStart(2,'0')).join('');}
@@ -1781,10 +1841,7 @@
     const mobileOptions=`<option value="overview" ${state.adminTab==='overview'?'selected':''}>Overview</option>${groups.map(group=>`<optgroup label="${esc(group.label)}">${group.items.map(([id,label])=>`<option value="${id}" ${state.adminTab===id?'selected':''}>${esc(label)}</option>`).join('')}</optgroup>`).join('')}`;
     return `<div class="admin-workspace admin-workspace-v2">
       <aside class="admin-section-nav" id="admin-section-nav" aria-label="Administration navigation">
-        <button class="admin-back-portal" type="button" data-action="admin-back-to-portal" aria-label="Exit administration and return to portal overview">
-          <svg class="ui-icon" aria-hidden="true"><use href="#icon-house"></use></svg>
-          <span>Back to Portal</span>
-        </button>
+        <button class="admin-back-portal" type="button" data-action="admin-back-to-portal" aria-label="Exit administration and return to portal overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-house"></use></svg><span>Back to Portal</span></button>
         <div class="admin-nav-brand"><span class="admin-nav-brand-mark">A</span><div><strong>Administration</strong><small>School workspace</small></div><button class="icon-button admin-nav-close" id="admin-nav-close" type="button" aria-label="Close administration navigation"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"></use></svg></button></div>
         <label class="admin-nav-search"><span aria-hidden="true">⌕</span><input id="admin-nav-search" type="search" placeholder="Find a section" aria-label="Find an administration section"></label>
         <nav class="admin-nav-list" aria-label="Management areas">${overviewButton}${groupMarkup}</nav>
@@ -1922,7 +1979,7 @@
 
   function annualActivityDataCounts() {
     let browserVoterFlags=0;
-    try{browserVoterFlags=Object.keys(window.localStorage).filter(key=>key.startsWith('school-poll-voted:')).length;}catch{}
+    browserVoterFlags=storageKeys().filter(key=>key.startsWith('school-poll-voted:')).length;
     return {
       registrations: db.registrations.length,
       ranks: db.results.length,
@@ -1955,7 +2012,7 @@
   function clearBrowserVoterFlags(electionId=null, publicKey=null) {
     try{
       const prefix=electionId===null?'school-poll-voted:':`school-poll-voted:${Number(electionId)}:${String(publicKey||'')}`;
-      for(const key of Object.keys(window.localStorage))if(key.startsWith(prefix))window.localStorage.removeItem(key);
+      for(const key of storageKeys())if(key.startsWith(prefix))storageRemove(key);
       return true;
     }catch{return false;}
   }
@@ -2243,12 +2300,36 @@
   let lastRenderedPage = null;
   function animatePageEntry(content) {
     if (!content) return;
+    // Restart only on route changes. A frame boundary avoids forcing a layout read.
     content.classList.remove('page-enter');
-    // Restart the entry transition only for route changes, not for filters or data refreshes.
-    void content.offsetWidth;
-    content.classList.add('page-enter');
-    window.setTimeout(() => content.classList.remove('page-enter'), 820);
+    window.requestAnimationFrame(() => {
+      if (!content.isConnected) return;
+      content.classList.add('page-enter');
+      window.setTimeout(() => content.classList.remove('page-enter'), 240);
+    });
   }
+  let generatedControlLabelId=0;
+  function ensureAccessibleControlLabels(root){
+    if(!root?.querySelectorAll)return;
+    root.querySelectorAll('input:not([type="hidden"]),select,textarea').forEach(control=>{
+      if(control.labels?.length||control.closest('label')||control.getAttribute('aria-label')||control.getAttribute('aria-labelledby'))return;
+      const field=control.closest('.form-field');
+      const label=field?.querySelector(':scope > label, :scope > .field-label, :scope > label:not(.check-tile)');
+      let text=label?.textContent?.replace(/\s+/g,' ').trim()||'';
+      if(!text){const filter=control.closest('.filter-field');text=filter?.querySelector('span')?.textContent?.replace(/\s+/g,' ').trim()||'';}
+      if(!text&&control.placeholder)text=control.placeholder.trim();
+      if(!text&&control.id==='movement-student-select')text='Choose a student to move';
+      if(!text&&control.id==='admin-prog-q')text='Search programme name or code';
+      if(!text&&control.id)text=control.id.replace(/[-_]/g,' ').replace(/\b\w/g,ch=>ch.toUpperCase());
+      if(!text&&control.name)text=control.name.replace(/[-_]/g,' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/\b\w/g,ch=>ch.toUpperCase());
+      if(text){
+        if(!control.id){let id;do{id=`portal-field-${++generatedControlLabelId}`;}while(document.getElementById(id));control.id=id;}
+        if(label&&!label.htmlFor&&!label.querySelector('input,select,textarea'))label.htmlFor=control.id;
+        else control.setAttribute('aria-label',text);
+      }
+    });
+  }
+
   function render() {
     if (!pageAllowed(state.page)) state.page = fallbackPage();
     const motionKey = [
@@ -2292,6 +2373,7 @@
         default:html=renderDashboard();
       }
       content.innerHTML=html;
+      ensureAccessibleControlLabels(content);
       if (routeChanged) animatePageEntry(content);
       if(state.page==='admin'&&state.adminTab==='parents'&&state.parentAccountQuery){
         const query=state.parentAccountQuery.trim().toLocaleLowerCase();let visible=0;
@@ -2426,7 +2508,7 @@
 
   function handleAction(action, el) {
     if(databaseRecoveryError&&action!=='backup-import'&&action!=='fullscreen')return toast('The saved school data needs recovery. Restore a valid backup before using the portal.','error');
-    const adminOnly = new Set(['admin-back-to-portal','account-panel','admin-tab','student-show-archived','student-restore','student-import','programme-add','programme-edit','programme-archive','programme-restore','programme-duplicate','result-manage','rank-edit','rank-clear','event-add','event-edit','event-delete','staff-add','staff-edit','staff-disable','teacher-manage-powers','house-apply-selected','house-select-all','house-select-student','house-class-expand','house-section-select','print-house-sheet','student-move-selected','student-move-one','student-move-picked','programme-export','registration-export','audit-export','backup-export','backup-import','demo-reset','annual-data-reset','election-add','election-toggle','election-select-admin','election-copy-vote-link','election-copy-live-link','election-open-vote-link','election-open-live-link','election-codes','election-codes-revoke','position-add','position-candidate-add','position-remove','candidate-remove','candidate-edit','participation-manager-export','participation-manager-export-xlsx','participation-manager-clear','deadline-select-all','deadline-select-none','results-filter-clear','programme-export-xlsx','registration-export-xlsx','admin-registration-add']);
+    const adminOnly = new Set(['admin-back-to-portal','account-panel','admin-tab','student-show-archived','student-restore','student-import','programme-add','programme-edit','programme-archive','programme-restore','programme-duplicate','result-manage','rank-edit','rank-clear','event-add','event-edit','event-delete','staff-add','staff-edit','staff-disable','teacher-manage-powers','house-apply-selected','house-select-all','house-select-student','student-move-selected','student-move-one','student-move-picked','programme-export','registration-export','audit-export','backup-export','backup-import','demo-reset','annual-data-reset','election-add','election-toggle','election-select-admin','election-copy-vote-link','election-copy-live-link','election-open-vote-link','election-open-live-link','election-codes','election-codes-revoke','position-add','position-candidate-add','position-remove','candidate-remove','candidate-edit','participation-manager-export','participation-manager-export-xlsx','participation-manager-clear','deadline-select-all','deadline-select-none','results-filter-clear','programme-export-xlsx','registration-export-xlsx','admin-registration-add']);
     if (adminOnly.has(action) && !isAdmin()) { toast('This action is available to administrators only.', 'error'); return; }
     if (action === 'student-export' && !['admin','teacher'].includes(state.role)) { toast('Directory export is not available to this role.', 'error'); return; }
     if (action === 'navigate' && !pageAllowed(el.dataset.page)) { toast('This workspace is not available to the selected role.', 'warning'); return; }
@@ -2774,11 +2856,19 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
       const names=[...new Set(String(f.get('houseNames')||'').split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean))];
       if(names.length<2||names.length>8)return toast('Configure between two and eight distinct house names.','error');
       if(names.some(name=>name.length>40||/[\u0000-\u001f\u007f]/.test(name))||new Set(names.map(name=>name.toLocaleLowerCase())).size!==names.length)return toast('Each house name must be unique, 40 characters or fewer, and cannot contain control characters.','error');
-      const removed=new Set((db.settings.houseNames||[]).filter(name=>!names.includes(name)));
-      const affected=db.students.filter(student=>student.house&&removed.has(student.house));
+      const canonicalByKey=new Map(names.map(name=>[name.toLocaleLowerCase(),name]));
+      const removedKeys=new Set((db.settings.houseNames||[]).map(name=>String(name).toLocaleLowerCase()).filter(key=>!canonicalByKey.has(key)));
+      const teamsUsingRemovedHouses=(db.groupTeams||[]).filter(team=>removedKeys.has(String(team.house||'').toLocaleLowerCase()));
+      if(teamsUsingRemovedHouses.length){
+        const labels=teamsUsingRemovedHouses.slice(0,3).map(team=>{const programme=programmeById(team.programmeId);return `${programme?.name||'Group Item'} — ${team.house} (${team.studentIds.length} members)`;}).join('; ');
+        const more=teamsUsingRemovedHouses.length>3?` and ${teamsUsingRemovedHouses.length-3} more`:'';
+        return toast(`Cannot remove a house while ${teamsUsingRemovedHouses.length} Group Item team(s) still use it: ${labels}${more}. Remove those team registrations from Programme Management first.`, 'error');
+      }
+      const affected=db.students.filter(student=>student.house&&removedKeys.has(String(student.house).toLocaleLowerCase()));
       if(affected.length&&!confirm(`${affected.length} student house assignment(s) use a house name being removed. These assignments will be cleared and can be reallocated later. Continue?`))return;
-      for(const student of affected)student.house='';
-      db.settings.houseNames=names;audit('house_names_updated','Houses',`${names.join(', ')} · ${affected.length} old assignments cleared with confirmation`);if(!saveDatabase())return toast('House names could not be saved. The previous saved settings were restored.','error');render();toast('House names saved.');return;
+      for(const student of db.students){if(!student.house)continue;const key=String(student.house).toLocaleLowerCase(),canonical=canonicalByKey.get(key);if(canonical)student.house=canonical;else if(removedKeys.has(key))student.house='';}
+      for(const team of db.groupTeams||[]){const canonical=canonicalByKey.get(String(team.house||'').toLocaleLowerCase());if(canonical)team.house=canonical;}
+      db.settings.houseNames=names;audit('house_names_updated','Houses',`${names.join(', ')} · ${affected.length} assignments cleared with confirmation; matching case changes preserved`);if(!saveDatabase())return toast('House names could not be saved. The previous saved settings were restored.','error');render();toast('House names saved.');return;
     }
     if(type==='student-move-single') {
       if(!isAdmin())return toast('Only administrators can move students.','error');
@@ -2835,7 +2925,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     if(type==='group-team'){
       if(!['admin','teacher'].includes(state.role))return toast('Only staff can create teams.','error');
       const pid=Number(form.dataset.programme),mode=form.dataset.mode,category=String(f.get('teamCategory')||''),house=String(f.get('teamHouse')||''),studentIds=f.getAll('studentIds').map(Number);
-      const result=createGroupTeam(pid,mode,category,house,studentIds);if(!result.ok)return toast(result.reason,'error');closeModal();render();toast(`${groupTeamLabel(result.team)} created with ${result.team.studentIds.length} students.`);return;
+      const result=createGroupTeam(pid,category,house,studentIds);if(!result.ok)return toast(result.reason,'error');closeModal();render();toast(`${groupTeamLabel(result.team)} created with ${result.team.studentIds.length} students.`);return;
     }
     if(type==='staff') {
       const existing=id?db.users.find(x=>x.id===id):null;
@@ -2951,7 +3041,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
       if(!saveDatabase())return toast('Programme deadlines could not be saved. The previous dates were restored.','error');render();toast(`Updated ${open&&close?'opening and closing dates':open?'opening dates':'closing dates'} for ${targets.length} programme(s).`);return;
     }
     if(type==='announcement'){const notice=String(f.get('announcement')||'').trim();if(notice.length>1000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(notice))return toast('Portal announcement must be 1,000 characters or fewer and cannot contain unsupported control characters.','error');db.settings.announcements=notice;audit('announcement_updated','Portal notice',notice.slice(0,80));if(!saveDatabase())return toast('Portal announcement could not be saved. The previous saved text was restored.','error');render();toast('Portal notice updated.');}
-    if(type==='school-config'){const activeClasses=[...new Set(f.getAll('activeClasses').map(Number))].sort((a,b)=>a-b),sectionsList=[...new Set(String(f.get('sections')).split(',').map(x=>x.trim().toUpperCase()).filter(Boolean))];if(!activeClasses.length||!sectionsList.length)return toast('Select at least one class and one section.','error');if(!activeClasses.every(n=>Number.isInteger(n)&&n>=1&&n<=12))return toast('Class selection is invalid.','error');if(!sectionsList.every(section=>section!=='UNSECTIONED'&&/^[A-Z0-9][A-Z0-9 -]{0,14}$/.test(section)))return toast('Section names must be 1–15 characters, use letters, numbers, spaces or hyphens, and must not use the reserved name Unsectioned.','error');const schoolName=String(f.get('schoolName')||'').trim(),shortName=String(f.get('shortName')||'').trim();if(!schoolName)return toast('School name is required.','error');if(schoolName.length>120||shortName.length>60||/[\u0000-\u001f\u007f]/.test(schoolName+shortName))return toast('School name must be 120 characters or fewer and short name 60 characters or fewer. Control characters are not allowed.','error');const removedStudent=db.students.find(st=>!activeClasses.includes(Number(st.classNo)));if(removedStudent)return toast(`A ${removedStudent.active?'student':'archived student'} record (${removedStudent.name}) still uses ${ordinalClass(removedStudent.classNo)}. Keep this class enabled or move every active and historical record before removing it.`, 'error');const removedSections=sections.filter(section=>!sectionsList.includes(section));let movedToUnsectioned=0;for(const student of db.students){if(student.section!=='Unsectioned'&&removedSections.includes(String(student.section).toUpperCase())){student.section='Unsectioned';movedToUnsectioned++;}}for(const key of Object.keys(db.settings.classTeachers||{})){const [,assignedSection]=key.split('|');if(removedSections.includes(String(assignedSection||'').toUpperCase()))delete db.settings.classTeachers[key];}db.settings.schoolName=schoolName;db.settings.shortName=shortName;db.settings.classes=activeClasses;db.settings.sections=sectionsList;classes=activeClasses;sections=sectionsList;for(const key of Object.keys(db.settings.classTeachers||{})){const [c,sec]=key.split('|');if(!classes.includes(Number(c))||(!sections.includes(sec)&&sec!=='Unsectioned'))delete db.settings.classTeachers[key];}audit('school_configuration_updated','School settings',`${db.settings.schoolName} · classes ${classes.join(', ')} · ${movedToUnsectioned} students moved to Unsectioned`);if(!saveDatabase())return toast('School configuration could not be saved. The previous saved settings were restored; review storage space and retry.','error');render();toast(movedToUnsectioned?`School configuration saved. ${movedToUnsectioned} students moved to Unsectioned.`:'School configuration saved.');}
+    if(type==='school-config'){const activeClasses=[...new Set(f.getAll('activeClasses').map(Number))].sort((a,b)=>a-b),sectionsList=[...new Set(String(f.get('sections')).split(',').map(x=>x.trim().toUpperCase()).filter(Boolean))];if(!activeClasses.length||!sectionsList.length)return toast('Select at least one class and one section.','error');if(!activeClasses.every(n=>Number.isInteger(n)&&n>=1&&n<=12))return toast('Class selection is invalid.','error');if(!sectionsList.every(section=>section!=='UNSECTIONED'&&/^[A-Z0-9][A-Z0-9 -]{0,14}$/.test(section)))return toast('Section names must be 1–15 characters, use letters, numbers, spaces or hyphens, and must not use the reserved name Unsectioned.','error');const schoolName=String(f.get('schoolName')||'').trim(),shortName=String(f.get('shortName')||'').trim();if(!schoolName)return toast('School name is required.','error');if(schoolName.length>120||shortName.length>60||/[\u0000-\u001f\u007f]/.test(schoolName+shortName))return toast('School name must be 120 characters or fewer and short name 60 characters or fewer. Control characters are not allowed.','error');const removedStudent=db.students.find(st=>!activeClasses.includes(Number(st.classNo)));if(removedStudent)return toast(`A ${removedStudent.active?'student':'archived student'} record (${removedStudent.name}) still uses ${ordinalClass(removedStudent.classNo)}. Keep this class enabled or move every active and historical record before removing it.`, 'error');const sectionCanonicalByKey=new Map(sectionsList.map(section=>[section.toLocaleUpperCase(),section]));let movedToUnsectioned=0;for(const student of db.students){if(student.section==='Unsectioned')continue;const canonical=sectionCanonicalByKey.get(String(student.section||'').toLocaleUpperCase());if(canonical){student.section=canonical;}else{student.section='Unsectioned';movedToUnsectioned++;}}const nextClassTeachers={};for(const [key,teacherId] of Object.entries(db.settings.classTeachers||{})){const [classText,assignedSection='']=key.split('|'),classNo=Number(classText);if(!activeClasses.includes(classNo))continue;if(assignedSection==='Unsectioned'){nextClassTeachers[`${classNo}|Unsectioned`]=teacherId;continue;}const canonical=sectionCanonicalByKey.get(assignedSection.toLocaleUpperCase());if(canonical)nextClassTeachers[`${classNo}|${canonical}`]=teacherId;}db.settings.classTeachers=nextClassTeachers;db.settings.schoolName=schoolName;db.settings.shortName=shortName;db.settings.classes=activeClasses;db.settings.sections=sectionsList;classes=activeClasses;sections=sectionsList;audit('school_configuration_updated','School settings',`${db.settings.schoolName} · classes ${classes.join(', ')} · ${movedToUnsectioned} students moved to Unsectioned`);if(!saveDatabase())return toast('School configuration could not be saved. The previous saved settings were restored; review storage space and retry.','error');render();toast(movedToUnsectioned?`School configuration saved. ${movedToUnsectioned} students moved to Unsectioned.`:'School configuration saved.');}
     if(type==='publication'){db.settings.publishResults=f.has('publishResults');db.settings.publishParticipants=false;audit('publication_settings_updated','Portal visibility',`Final results ${db.settings.publishResults?'published':'hidden'}; participant rosters remain private`);if(!saveDatabase())return toast('Publication settings could not be saved. The previous visibility settings were restored.','error');render();toast('Publication settings saved.');}
     if(type==='election-settings') {
       const e=electionDb.elections.find(x=>x.id===Number(form.dataset.id));if(!e)return;
@@ -3337,7 +3427,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     const action=actionEl.dataset.action;
     if(action==='account-panel'){if(!isAdmin())return toast('Administrator access required.','error');state.accountPanel=['admins','teachers','parents'].includes(actionEl.dataset.panel)?actionEl.dataset.panel:'admins';render();return;}
     if(action==='class-teacher-expand'){if(!isAdmin())return toast('Only administrators can assign class teachers.','error');state.classTeacherClass=Number(actionEl.dataset.class)===Number(state.classTeacherClass)?null:Number(actionEl.dataset.class);render();return;}
-    if(action==='house-class-expand'){if(state.role==='teacher'&&!currentTeacherCanAssignHouses())return toast('House assignment permission is not enabled.','error');const classNo=Number(actionEl.dataset.class);state.houseBrowser={classNo:classNo===Number(state.houseBrowser.classNo)?null:classNo,section:null};state.houseSelectedStudentIds=[];state.lastHouseSelectionIndex=-1;render();return;}
+    if(action==='house-class-expand'){const classNo=Number(actionEl.dataset.class);if(!isAdmin()&&state.role!=='teacher')return toast('House assignment is only available to authorised staff.','error');if(state.role==='teacher'&&(!currentTeacherCanAssignHouses()||!teacherClassSections().some(pair=>pair.classNo===classNo)))return toast('House assignment is not enabled for this class.','error');state.houseBrowser={classNo:classNo===Number(state.houseBrowser.classNo)?null:classNo,section:null};state.houseSelectedStudentIds=[];state.lastHouseSelectionIndex=-1;render();return;}
     if(action==='house-section-select'){const classNo=Number(actionEl.dataset.class),section=String(actionEl.dataset.section);if(!(isAdmin()||(state.role==='teacher'&&currentTeacherCanAssignHouses()&&teacherCanAccessSection(classNo,section))))return toast('That section is outside your house-assignment permission.','error');state.houseBrowser={classNo,section};state.houseSelectedStudentIds=[];state.lastHouseSelectionIndex=-1;render();return;}
     if(action==='house-select-student'){if(!isAdmin())return toast('Only administrators can select students for mass house assignment.','error');const id=Number(actionEl.dataset.id),visible=[...document.querySelectorAll('[data-action="house-select-student"]')].map(el=>Number(el.dataset.id));const idx=visible.indexOf(id),ids=new Set(state.houseSelectedStudentIds);const select=!ids.has(id);if(event.shiftKey&&state.lastHouseSelectionIndex>=0&&idx>=0){const start=Math.min(idx,state.lastHouseSelectionIndex),end=Math.max(idx,state.lastHouseSelectionIndex);for(let i=start;i<=end;i++){if(select)ids.add(visible[i]);else ids.delete(visible[i]);}}else if(select)ids.add(id);else ids.delete(id);state.lastHouseSelectionIndex=idx;state.houseSelectedStudentIds=[...ids];render();return;}
     if(action==='house-select-all'){if(!isAdmin())return;const visible=houseStudentsForPair(state.houseBrowser.classNo,state.houseBrowser.section).map(st=>st.id);state.houseSelectedStudentIds=actionEl.checked?visible:[];state.lastHouseSelectionIndex=-1;render();return;}
@@ -3351,8 +3441,8 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
       if(!election)return toast('This election no longer exists.','error');
       openModal(action==='election-reset-ballots'?'Clear election ballots':'Reset full election',electionResetForm(election,action==='election-reset-ballots'?'ballots':'full'),'ELECTION RESET');return;
     }
-    if(action==='position-add'){if(!isAdmin()){toast('Only administrators can edit election positions.','error');return;}const e=electionDb.elections.find(x=>x.id===Number(actionEl.dataset.id));if(electionStructureEditable(e)){if(!commitElectionMutation(()=>e.positions.push({id:electionDb.nextIds.position++,name:'New position',candidates:[]}), 'election_position_added','Election',e.title))return toast('The position could not be saved. Check browser storage.','error');render();}return;}
-    if(action==='position-candidate-add'){if(!isAdmin()){toast('Only administrators can edit election candidates.','error');return;}const e=electionDb.elections.find(x=>x.id===Number(actionEl.dataset.election));const pos=e?.positions.find(x=>x.id===Number(actionEl.dataset.position));if(electionStructureEditable(e)&&pos){if(!commitElectionMutation(()=>pos.candidates.push({id:electionDb.nextIds.candidate++,name:'Candidate name',classLabel:'Class',details:''})))return toast('The candidate could not be saved. Check browser storage and try again.','error');render();}return;}
+    if(action==='position-add'){if(!isAdmin()){toast('Only administrators can edit election positions.','error');return;}const e=electionDb.elections.find(x=>x.id===Number(actionEl.dataset.id));if(electionStructureEditable(e)){if(e.positions.length>=30)return toast('An election can contain up to 30 positions.','warning');if(!commitElectionMutation(()=>e.positions.push({id:electionDb.nextIds.position++,name:'New position',candidates:[]}), 'election_position_added','Election',e.title))return toast('The position could not be saved. Check browser storage.','error');render();}return;}
+    if(action==='position-candidate-add'){if(!isAdmin()){toast('Only administrators can edit election candidates.','error');return;}const e=electionDb.elections.find(x=>x.id===Number(actionEl.dataset.election));const pos=e?.positions.find(x=>x.id===Number(actionEl.dataset.position));if(electionStructureEditable(e)&&pos){const totalCandidates=e.positions.reduce((sum,item)=>sum+(item.candidates||[]).length,0);if(pos.candidates.length>=100||totalCandidates>=1000)return toast('This election has reached the candidate limit (100 per position, 1,000 overall).','warning');if(!commitElectionMutation(()=>pos.candidates.push({id:electionDb.nextIds.candidate++,name:'Candidate name',classLabel:'Class',details:''})))return toast('The candidate could not be saved. Check browser storage and try again.','error');render();}return;}
     if(action==='position-remove'){if(!isAdmin()){toast('Only administrators can edit election positions.','error');return;}const e=electionDb.elections.find(x=>x.id===Number(actionEl.dataset.election));if(electionStructureEditable(e)){if(!commitElectionMutation(()=>{e.positions=e.positions.filter(x=>x.id!==Number(actionEl.dataset.position));},'election_position_removed','Election',e.title))return toast('The position could not be saved. Check browser storage.','error');render();}return;}
     if(action==='candidate-remove'){if(!isAdmin()){toast('Only administrators can edit election candidates.','error');return;}const e=electionDb.elections.find(x=>x.id===Number(actionEl.dataset.election));const pos=e?.positions.find(x=>x.id===Number(actionEl.dataset.position));if(electionStructureEditable(e)&&pos){if(!commitElectionMutation(()=>{pos.candidates=pos.candidates.filter(x=>x.id!==Number(actionEl.dataset.candidate));},'election_candidate_removed','Election',e.title))return toast('The candidate could not be removed. Check browser storage.','error');render();}return;}
     if(action==='candidate-edit'){if(!isAdmin()){toast('Only administrators can edit election candidates.','error');return;}const e=electionDb.elections.find(x=>x.id===Number(actionEl.dataset.election));const pos=e?.positions.find(x=>x.id===Number(actionEl.dataset.position));const cand=pos?.candidates.find(x=>x.id===Number(actionEl.dataset.candidate));if(cand&&electionStructureEditable(e))openModal('Edit candidate',`<form data-form="candidate" data-election="${e.id}" data-position="${pos.id}" data-candidate="${cand.id}"><div class="form-field"><label>Candidate name</label><input class="field" name="name" maxlength="80" value="${esc(cand.name)}" required></div><div class="form-field" style="margin-top:10px"><label>Class / section label</label><input class="field" name="classLabel" maxlength="40" value="${esc(cand.classLabel||'')}" placeholder="Class 11 · A"></div><div class="form-field" style="margin-top:10px"><label>Additional candidate details (optional)</label><textarea class="field textarea" name="details" rows="3" maxlength="240" placeholder="Short description, house or role details">${esc(cand.details||'')}</textarea></div><div class="form-actions"><button class="btn btn-primary">Save candidate</button></div></form>`,'CANDIDATE');return;}
@@ -3427,7 +3517,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     for(const key of arrays)if(!Array.isArray(data[key]))throw new Error(`Backup is missing a valid ${key} collection.`);
     if(!Array.isArray(data.groupTeams))data.groupTeams=[];
     if(!data.settings||typeof data.settings!=='object'||!data.nextIds||typeof data.nextIds!=='object')throw new Error('Backup settings or ID counters are missing.');
-    for(const key of ['student','programme','registration','event','user','election','position','candidate'])if(!Number.isSafeInteger(Number(data.nextIds[key]))||Number(data.nextIds[key])<1)throw new Error(`Backup ID counter “${key}” is invalid.`);
+    for(const key of ['student','programme','registration','groupTeam','event','user','election','position','candidate'])if(!Number.isSafeInteger(Number(data.nextIds[key]))||Number(data.nextIds[key])<1)throw new Error(`Backup ID counter “${key}” is invalid.`);
     if(data.students.length>50000||data.programmes.length>5000||data.registrations.length>250000||data.results.length>250000||data.selections.length>250000||data.events.length>5000||data.users.length>5000||data.elections.length>500||data.groupTeams.length>10000||data.audit.length>300)throw new Error('Backup contains more records than this browser can safely load.');
     const boundedText=(value,max)=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value);
     for(const [key,max] of [['schoolName',120],['shortName',60],['academicYear',32],['dashboardEyebrow',60],['dashboardTitle',140],['dashboardDescription',320],['dashboardQuote',140],['announcements',1000]])if(data.settings[key]!==undefined&&!boundedText(String(data.settings[key]),max))throw new Error(`Backup contains invalid or oversized school setting: ${key}.`);
@@ -3436,7 +3526,7 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     const sectionPattern=/^[A-Z0-9][A-Z0-9 -]{0,14}$/i;
     if(data.settings.sections.length>50||data.settings.sections.some(section=>typeof section!=='string'||!section||section!==section.trim()||section.toUpperCase()==='UNSECTIONED'||!sectionPattern.test(section))||new Set(data.settings.sections.map(section=>String(section).toUpperCase())).size!==data.settings.sections.length)throw new Error('Backup contains invalid, reserved or duplicate section names. Section names must be unique, 1–15 characters, and cannot use the reserved name Unsectioned.');
     if(!isSafeBrandImageDataUrl(data.settings.logoDataUrl)||!isSafeBrandImageDataUrl(data.settings.backgroundDataUrl))throw new Error('Backup contains an invalid school logo or background image. Only PNG, JPEG or WebP data URLs are accepted.');
-    if(!Array.isArray(data.settings.houseNames)||data.settings.houseNames.length>8||data.settings.houseNames.some(name=>typeof name!=='string'||!name.trim()||name.length>40||/[\u0000-\u001f\u007f]/.test(name))||new Set(data.settings.houseNames.map(name=>name.toLowerCase())).size!==data.settings.houseNames.length)throw new Error('Backup contains invalid, oversized or duplicate House names.');
+    if(!Array.isArray(data.settings.houseNames)||data.settings.houseNames.length>8||data.settings.houseNames.some(name=>typeof name!=='string'||!name.trim()||name!==name.trim()||name.length>40||/[\u0000-\u001f\u007f]/.test(name))||new Set(data.settings.houseNames.map(name=>name.trim().toLocaleLowerCase())).size!==data.settings.houseNames.length)throw new Error('Backup contains invalid, oversized or duplicate House names.');
     const limits=['maxArts','maxSports','maxGroup','maxArtsOnstage','maxArtsOffstage','maxSportsTrack','maxSportsField'];for(const key of limits)if(data.settings[key]!==undefined&&(!Number.isSafeInteger(Number(data.settings[key]))||Number(data.settings[key])<0||Number(data.settings[key])>50))throw new Error(`Backup choice limit “${key}” is invalid.`);
     const savedBands=Array.isArray(data.settings.categoryBands)&&data.settings.categoryBands.length?data.settings.categoryBands:defaultCategoryBands();
     if(savedBands.length>8||savedBands.some(b=>!String(b.name||'').trim()||String(b.name).length>40||/[\u0000-\u001f\u007f]/.test(String(b.name))||String(b.name).trim().toLowerCase()==='group item'||!Number.isInteger(Number(b.minClass))||!Number.isInteger(Number(b.maxClass))||Number(b.minClass)<1||Number(b.maxClass)>12||Number(b.minClass)>Number(b.maxClass))||new Set(savedBands.map(b=>String(b.name).trim().toLowerCase())).size!==savedBands.length)throw new Error('Backup contains invalid class category ranges.');
@@ -3445,14 +3535,16 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     const uncoveredClasses=data.settings.classes.map(Number).filter(classNo=>!savedBands.some(band=>classNo>=Number(band.minClass)&&classNo<=Number(band.maxClass)));
     if(uncoveredClasses.length)throw new Error(`Backup category bands do not cover active classes: ${uncoveredClasses.map(ordinalClass).join(', ')}.`);
     const studentIds=new Set(),admissions=new Set(),programmeIds=new Set(),programmeCodes=new Set();
-    for(const st of data.students){const id=Number(st?.id),admission=String(st?.admissionNo||'').trim().toLowerCase(),name=st?.name;if(!st||typeof st!=='object'||Array.isArray(st)||typeof st.id!=='number'||!Number.isSafeInteger(id)||id<1||studentIds.has(id)||typeof st.admissionNo!=='string'||st.admissionNo.length>80||/[\u0000-\u001f\u007f]/.test(st.admissionNo)||!admission||admissions.has(admission)||typeof name!=='string'||!name.trim()||name.length>120||/[\u0000-\u001f\u007f]/.test(name)||typeof st.classNo!=='number'||!data.settings.classes.map(Number).includes(st.classNo)||!['Boy','Girl','Not specified',undefined,''].includes(st.gender)||!(data.settings.sections.includes(st.section)||st.section==='Unsectioned')||typeof st.section!=='string'||st.section.length>15||st.house!==undefined&&(typeof st.house!=='string'||st.house.length>40||/[\u0000-\u001f\u007f]/.test(st.house)))throw new Error('Backup contains an invalid or duplicate student record.');studentIds.add(id);admissions.add(admission);}
+    for(const st of data.students){const id=Number(st?.id),admission=String(st?.admissionNo||'').trim().toLowerCase(),name=st?.name;if(!st||typeof st!=='object'||Array.isArray(st)||typeof st.id!=='number'||!Number.isSafeInteger(id)||id<1||studentIds.has(id)||typeof st.admissionNo!=='string'||st.admissionNo.length>80||/[\u0000-\u001f\u007f]/.test(st.admissionNo)||!admission||admissions.has(admission)||typeof name!=='string'||!name.trim()||name.length>120||/[\u0000-\u001f\u007f]/.test(name)||typeof st.classNo!=='number'||!data.settings.classes.map(Number).includes(st.classNo)||!['Boy','Girl','Not specified',undefined,''].includes(st.gender)||!(data.settings.sections.includes(st.section)||st.section==='Unsectioned')||typeof st.section!=='string'||st.section.length>15||st.house!==undefined&&(typeof st.house!=='string'||st.house.length>40||/[\u0000-\u001f\u007f]/.test(st.house)||!!st.house&&!data.settings.houseNames.includes(st.house)))throw new Error('Backup contains an invalid or duplicate student record.');studentIds.add(id);admissions.add(admission);}
     for(const prog of data.programmes){const id=Number(prog.id),code=String(prog.code||'').trim().toLowerCase();if(typeof prog.id!=='number'||!Number.isSafeInteger(id)||id<1||programmeIds.has(id)||!code||programmeCodes.has(code)||!boundedText(String(prog.name||''),120)||!String(prog.name||'').trim()||!boundedText(String(prog.code||''),40)||!String(prog.code||'').trim()||!boundedText(String(prog.description||''),800)||!['Arts','Sports'].includes(prog.area)||!(validCategories.has(prog.category)||prog.category==='Group Item')||!['All','Boys','Girls'].includes(prog.gender)||typeof prog.capacity!=='number'||!Number.isFinite(prog.capacity)||prog.capacity<1||!['open','closed','draft'].includes(prog.status)||(prog.category==='Group Item'&&(!['classes','categories'].includes(prog.groupScope)||!Number.isInteger(prog.classMin)||!Number.isInteger(prog.classMax)||prog.classMin<1||prog.classMax>12||prog.classMin>prog.classMax||(prog.groupScope==='categories'&&(!Array.isArray(prog.eligibleCategories)||!prog.eligibleCategories.length||prog.eligibleCategories.some(c=>!validCategories.has(c)))))))throw new Error('Backup contains an invalid or duplicate programme record.');programmeIds.add(id);programmeCodes.add(code);}
     for(const prog of data.programmes){prog.ageGroup='Open';prog.ageCutoffDate='';prog.maxAge=null;}
-    const groupTeamIds=new Set();for(const team of data.groupTeams){const teamId=Number(team?.id),programmeId=Number(team?.programmeId);if(!team||typeof team!=='object'||!Number.isSafeInteger(teamId)||teamId<1||groupTeamIds.has(teamId)||!programmeIds.has(programmeId)||team.mode!=='house'||typeof team.house!=='string'||!team.house.trim()||team.house.length>40||typeof team.category!=='string'||team.category.length>40||!Array.isArray(team.studentIds)||team.studentIds.length>1000||team.studentIds.some(id=>!Number.isSafeInteger(Number(id))||Number(id)<1)||new Set(team.studentIds.map(Number)).size!==team.studentIds.length)throw new Error('Backup contains an invalid House Team record.');groupTeamIds.add(teamId);}
-    const registrationKeys=new Set(),registrationIds=new Set();for(const reg of data.registrations){const sid=Number(reg.studentId),pid=Number(reg.programmeId),rid=Number(reg.id),key=`${sid}:${pid}`;if(typeof reg.id!=='number'||typeof reg.studentId!=='number'||typeof reg.programmeId!=='number'||!Number.isSafeInteger(rid)||rid<1||registrationIds.has(rid)||!studentIds.has(sid)||!programmeIds.has(pid)||registrationKeys.has(key))throw new Error('Backup contains a duplicate or broken registration reference.');registrationIds.add(rid);registrationKeys.add(key);}
+    const groupTeamIds=new Set();for(const team of data.groupTeams){const teamId=Number(team?.id),programmeId=Number(team?.programmeId),teamProgramme=data.programmes.find(item=>Number(item.id)===programmeId);if(!team||typeof team!=='object'||Array.isArray(team)||!Number.isSafeInteger(teamId)||teamId<1||groupTeamIds.has(teamId)||!programmeIds.has(programmeId)||teamProgramme?.category!=='Group Item'||team.mode!=='house'||typeof team.house!=='string'||!team.house.trim()||team.house.length>40||!data.settings.houseNames.includes(team.house)||typeof team.category!=='string'||!validCategories.has(team.category)||!Array.isArray(team.studentIds)||team.studentIds.length<1||team.studentIds.length>1000||team.studentIds.some(id=>!Number.isSafeInteger(Number(id))||Number(id)<1)||new Set(team.studentIds.map(Number)).size!==team.studentIds.length)throw new Error('Backup contains an invalid House Team record.');groupTeamIds.add(teamId);}
+    const registrationKeys=new Set(),registrationIds=new Set(),registrationsByKey=new Map(),registrationsByTeam=new Map();for(const reg of data.registrations){const sid=Number(reg.studentId),pid=Number(reg.programmeId),rid=Number(reg.id),key=`${sid}:${pid}`;if(typeof reg.id!=='number'||typeof reg.studentId!=='number'||typeof reg.programmeId!=='number'||!Number.isSafeInteger(rid)||rid<1||registrationIds.has(rid)||!studentIds.has(sid)||!programmeIds.has(pid)||registrationKeys.has(key))throw new Error('Backup contains a duplicate or broken registration reference.');registrationIds.add(rid);registrationKeys.add(key);registrationsByKey.set(key,reg);if(reg.groupTeamId!==undefined&&reg.groupTeamId!==null){const teamId=Number(reg.groupTeamId);if(!Number.isSafeInteger(teamId)||!groupTeamIds.has(teamId))throw new Error('Backup contains a registration linked to a missing House Team.');registrationsByTeam.set(`${teamId}:${sid}`,reg);}}
+    const groupedStudentsByProgramme=new Set();for(const team of data.groupTeams){const programme=data.programmes.find(item=>Number(item.id)===Number(team.programmeId));for(const rawStudentId of team.studentIds){const sid=Number(rawStudentId),student=data.students.find(item=>Number(item.id)===sid),key=`${team.programmeId}:${sid}`,registration=registrationsByKey.get(`${sid}:${team.programmeId}`);if(!student||student.house!==team.house||!registration||Number(registration.groupTeamId)!==Number(team.id)||groupedStudentsByProgramme.has(key)||catForClassWithBands(student.classNo,savedBands)!==team.category||programme.gender!=='All'&&student.gender!==programme.gender||programme.groupScope==='classes'&&(student.classNo<programme.classMin||student.classNo>programme.classMax)||programme.groupScope==='categories'&&!programme.eligibleCategories.includes(team.category))throw new Error('Backup contains a House Team member with invalid eligibility or a missing/mismatched registration.');groupedStudentsByProgramme.add(key);}}
+    for(const reg of data.registrations){if(reg.groupTeamId===undefined||reg.groupTeamId===null)continue;const team=data.groupTeams.find(item=>Number(item.id)===Number(reg.groupTeamId));if(!team||Number(team.programmeId)!==Number(reg.programmeId)||!team.studentIds.map(Number).includes(Number(reg.studentId))||!registrationsByTeam.has(`${team.id}:${reg.studentId}`))throw new Error('Backup contains a registration with a broken House Team membership.');} 
     const resultKeys=new Set(),rankKeys=new Set();for(const result of data.results){const numericRank=Number(result.rank),key=`${Number(result.studentId)}:${Number(result.programmeId)}`,rankKey=`${Number(result.programmeId)}:${numericRank}`;if(typeof result.studentId!=='number'||typeof result.programmeId!=='number'||!studentIds.has(Number(result.studentId))||!programmeIds.has(Number(result.programmeId))||![1,2,3].includes(numericRank)||!registrationKeys.has(key)||resultKeys.has(key)||rankKeys.has(rankKey))throw new Error('Backup contains an invalid or duplicate result record.');result.rank=numericRank;resultKeys.add(key);rankKeys.add(rankKey);} 
     const eventIds=new Set();for(const event of data.events){const id=Number(event.id),date=String(event.date||''),endDate=String(event.endDate||date),validDate=value=>{const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value);if(!m)return false;const d=new Date(Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3])));return d.getUTCFullYear()===Number(m[1])&&d.getUTCMonth()===Number(m[2])-1&&d.getUTCDate()===Number(m[3]);};if(typeof event.id!=='number'||!Number.isSafeInteger(id)||id<1||eventIds.has(id)||!boundedText(String(event.title||''),120)||!String(event.title||'').trim()||!boundedText(String(event.venue||''),100)||!boundedText(String(event.coordinator||''),100)||!boundedText(String(event.description||''),800)||!validDate(date)||!validDate(endDate)||endDate<date||event.time&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(event.time)||event.endTime&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(event.endTime)||!['Everyone','Parents and students','Teachers','Staff only',undefined].includes(event.audience)||event.description&&String(event.description).length>800)throw new Error('Backup contains an invalid event (title, date, time or audience).');eventIds.add(id);event.endDate=endDate;if(typeof event.allDay!=='boolean')event.allDay=!event.time;}
-    const userIds=new Set();for(const user of data.users){if(!user||typeof user!=='object'||Array.isArray(user)||typeof user.id!=='number'||!Number.isSafeInteger(Number(user.id))||Number(user.id)<1||userIds.has(Number(user.id))||!['admin','teacher','parent'].includes(user.role)||typeof user.displayName!=='string'||!user.displayName.trim()||user.displayName.length>120||/[\u0000-\u001f\u007f]/.test(user.displayName))throw new Error('Backup contains an unsupported or invalid account. Developer identities are not part of the HTML workspace.');userIds.add(Number(user.id));if(user.role==='parent'&&(!Array.isArray(user.linkedStudentIds)||user.linkedStudentIds.length>1000||user.linkedStudentIds.some(id=>!studentIds.has(Number(id)))||new Set(user.linkedStudentIds.map(Number)).size!==user.linkedStudentIds.length))throw new Error('Backup contains a parent account with an invalid or duplicate linked child reference.');if(user.role==='parent'&&(!Array.isArray(user.classNumbers)||user.classNumbers.length>12||user.classNumbers.some(n=>!Number.isInteger(Number(n))||Number(n)<1||Number(n)>12)))throw new Error('Backup contains a parent account with an invalid class assignment.');}
+    const userIds=new Set();for(const user of data.users){if(!user||typeof user!=='object'||Array.isArray(user)||typeof user.id!=='number'||!Number.isSafeInteger(Number(user.id))||Number(user.id)<1||userIds.has(Number(user.id))||!['admin','teacher','parent'].includes(user.role)||typeof user.displayName!=='string'||!user.displayName.trim()||user.displayName.length>120||/[\u0000-\u001f\u007f]/.test(user.displayName))throw new Error('Backup contains an unsupported or invalid account. Developer identities are not part of the HTML workspace.');userIds.add(Number(user.id));if(user.role==='parent'&&(!Array.isArray(user.linkedStudentIds)||user.linkedStudentIds.length>1000||user.linkedStudentIds.some(id=>!studentIds.has(Number(id)))||new Set(user.linkedStudentIds.map(Number)).size!==user.linkedStudentIds.length))throw new Error('Backup contains a parent account with an invalid or duplicate linked child reference.');if(user.role==='parent'&&(!Array.isArray(user.classNumbers)||user.classNumbers.length>12||user.classNumbers.some(n=>!Number.isInteger(Number(n))||Number(n)<1||Number(n)>12)||new Set(user.classNumbers.map(Number)).size!==user.classNumbers.length))throw new Error('Backup contains a parent account with an invalid class assignment.');}
     for(const [key,teacherId] of Object.entries(data.settings.classTeachers)){const parts=key.split('|'),classNo=Number(parts[0]),section=String(parts[1]||'');const teacher=data.users.find(u=>Number(u.id)===Number(teacherId));if(parts.length!==2||!data.settings.classes.map(Number).includes(classNo)||!(data.settings.sections.includes(section)||section==='Unsectioned')||!teacher||teacher.role!=='teacher'||teacher.active===false)throw new Error('Backup contains an invalid class teacher assignment.');}
     if(!data.users.some(u=>u.role==='admin'&&u.active))throw new Error('Backup must retain at least one active administrator.');
     for(const row of data.audit){if(!row||typeof row!=='object'||Array.isArray(row)||!Number.isSafeInteger(Number(row.id))||Number(row.id)<1||typeof row.action!=='string'||row.action.length>100||typeof row.record!=='string'||row.record.length>120||typeof row.detail!=='string'||row.detail.length>2000||row.date&&!Number.isFinite(Date.parse(row.date)))throw new Error('Backup contains an invalid audit-log record.');}
@@ -3460,10 +3552,10 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     if(data.settings.teacherPermissions!==undefined&&(!data.settings.teacherPermissions||typeof data.settings.teacherPermissions!=='object'||Array.isArray(data.settings.teacherPermissions)))throw new Error('Backup contains an invalid teacher permission map.');
     for(const [teacherId,permissions] of Object.entries(data.settings.teacherPermissions||{}))if(!teacherIds.has(teacherId)||!permissions||typeof permissions!=='object'||Array.isArray(permissions)||Object.entries(permissions).some(([key,value])=>!['viewReports','addStudents','editStudents','removeStudents','assignHouses','manageSections'].includes(key)||typeof value!=='boolean'))throw new Error('Backup contains invalid teacher powers.');
     const selectionKeys=new Set();for(const selection of data.selections){const key=String(selection.programmeId);if(typeof selection.studentId!=='number'||typeof selection.programmeId!=='number'||!studentIds.has(Number(selection.studentId))||!programmeIds.has(Number(selection.programmeId))||selectionKeys.has(key)||!['School competition','Direct Sahodaya Entry'].includes(selection.pathway)||(selection.pathway==='School competition'&&!registrationKeys.has(`${Number(selection.studentId)}:${Number(selection.programmeId)}`)))throw new Error('Backup contains an invalid or duplicate Sahodaya selection.');selectionKeys.add(key);}
-    const electionIds=new Set(),globalPositionIds=new Set(),globalCandidateIds=new Set();for(const election of data.elections){const electionId=Number(election.id);if(typeof election.id!=='number'||!Number.isSafeInteger(electionId)||electionId<1||electionIds.has(electionId)||!Array.isArray(election.positions)||!Array.isArray(election.ballots)||!Array.isArray(election.tokens)||!Array.isArray(election.usedTokens)||!['draft','open','closed','published'].includes(election.status)||typeof election.publicKey!=='string'||election.publicKey.length<8||!Array.isArray(election.eligibleClasses)||!election.eligibleClasses.length||election.eligibleClasses.some(c=>!data.settings.classes.map(Number).includes(Number(c))))throw new Error('Backup contains an invalid election record.');electionIds.add(electionId);const positions=new Set(election.positions.map(x=>String(x.id)));if(positions.size!==election.positions.length)throw new Error('Backup contains duplicate election positions.');const candidates=new Set();for(const position of election.positions){const positionId=Number(position.id);if(typeof position.id!=='number'||!Number.isSafeInteger(positionId)||positionId<1||globalPositionIds.has(positionId)||!Array.isArray(position.candidates)||!String(position.name||'').trim()||String(position.name).length>80)throw new Error('Backup contains an invalid or duplicate election position.');globalPositionIds.add(positionId);for(const candidate of position.candidates){const candidateId=Number(candidate.id);if(typeof candidate.id!=='number'||!Number.isSafeInteger(candidateId)||candidateId<1||candidates.has(candidateId)||globalCandidateIds.has(candidateId)||!String(candidate.name||'').trim()||String(candidate.name).length>80||String(candidate.classLabel||'').length>40||String(candidate.details||'').length>240)throw new Error('Backup contains an invalid or duplicate candidate.');candidates.add(candidateId);globalCandidateIds.add(candidateId);}}const ballotIds=new Set();for(const ballot of election.ballots){if(!ballot||typeof ballot.id!=='string'||!/^anon-[a-f0-9]{16,}$/i.test(ballot.id)||ballotIds.has(ballot.id)||typeof ballot.choices!=='object'||Array.isArray(ballot.choices)||Object.keys(ballot).some(key=>!['id','choices'].includes(key)))throw new Error('Backup contains an invalid or identifiable ballot record.');ballotIds.add(ballot.id);if(!election.allowAbstain&&election.positions.some(pos=>!Object.hasOwn(ballot.choices,String(pos.id))))throw new Error('Backup contains an incomplete ballot.');for(const [positionId,candidateId] of Object.entries(ballot.choices)){const pos=election.positions.find(x=>String(x.id)===positionId);if(!positions.has(positionId)||!pos.candidates.some(c=>String(c.id)===String(candidateId)))throw new Error('Backup contains a ballot with an invalid candidate reference.');}}const uniqueTokens=new Set(election.tokens);if(uniqueTokens.size!==election.tokens.length||election.tokens.some(token=>typeof token!=='string'||!token.trim())||new Set(election.usedTokens).size!==election.usedTokens.length||election.usedTokens.some(token=>!election.tokens.includes(token)))throw new Error('Backup contains invalid or duplicate election eligibility codes.');}
+    const electionIds=new Set(),globalPositionIds=new Set(),globalCandidateIds=new Set();for(const election of data.elections){const electionId=Number(election.id),opens=schoolDateTimeMillis(election.openAt),closes=schoolDateTimeMillis(election.closeAt);if(typeof election.id!=='number'||!Number.isSafeInteger(electionId)||electionId<1||electionIds.has(electionId)||!boundedText(String(election.title||''),100)||!String(election.title||'').trim()||!Number.isFinite(opens)||!Number.isFinite(closes)||closes<=opens||typeof election.showLive!=='boolean'||typeof election.allowAbstain!=='boolean'||!Array.isArray(election.positions)||election.positions.length>30||!Array.isArray(election.ballots)||election.ballots.length>MAX_ELECTION_BALLOTS||!Array.isArray(election.tokens)||election.tokens.length>50000||!Array.isArray(election.usedTokens)||election.usedTokens.length>50000||!['draft','open','closed','published'].includes(election.status)||typeof election.publicKey!=='string'||election.publicKey.length<8||election.publicKey.length>128||!Array.isArray(election.eligibleClasses)||!election.eligibleClasses.length||new Set(election.eligibleClasses.map(Number)).size!==election.eligibleClasses.length||election.eligibleClasses.some(c=>!data.settings.classes.map(Number).includes(Number(c))))throw new Error('Backup contains an invalid election record.');if(election.status!=='draft'&&(!election.positions.length||election.positions.some(pos=>!Array.isArray(pos.candidates)||!pos.candidates.length)))throw new Error('An opened or completed election must retain at least one candidate for every position.');electionIds.add(electionId);const positions=new Set(election.positions.map(x=>String(x.id)));if(positions.size!==election.positions.length)throw new Error('Backup contains duplicate election positions.');const candidates=new Set();let totalCandidates=0;for(const position of election.positions){const positionId=Number(position.id);if(typeof position.id!=='number'||!Number.isSafeInteger(positionId)||positionId<1||globalPositionIds.has(positionId)||!Array.isArray(position.candidates)||position.candidates.length>100||!boundedText(String(position.name||''),80)||!String(position.name||'').trim())throw new Error('Backup contains an invalid or duplicate election position.');globalPositionIds.add(positionId);for(const candidate of position.candidates){const candidateId=Number(candidate.id);if(typeof candidate.id!=='number'||!Number.isSafeInteger(candidateId)||candidateId<1||candidates.has(candidateId)||globalCandidateIds.has(candidateId)||!boundedText(String(candidate.name||''),80)||!String(candidate.name||'').trim()||!boundedText(String(candidate.classLabel||''),40)||!boundedText(String(candidate.details||''),240))throw new Error('Backup contains an invalid or duplicate candidate.');candidates.add(candidateId);globalCandidateIds.add(candidateId);totalCandidates++;}}if(totalCandidates>1000)throw new Error('Election backup exceeds the public ballot limit of 1,000 candidates.');const ballotIds=new Set();for(const ballot of election.ballots){if(!ballot||typeof ballot.id!=='string'||!/^anon-[a-f0-9]{16,}$/i.test(ballot.id)||ballotIds.has(ballot.id)||typeof ballot.choices!=='object'||Array.isArray(ballot.choices)||Object.keys(ballot).some(key=>!['id','choices'].includes(key)))throw new Error('Backup contains an invalid or identifiable ballot record.');ballotIds.add(ballot.id);if(!election.allowAbstain&&election.positions.some(pos=>!Object.hasOwn(ballot.choices,String(pos.id))))throw new Error('Backup contains an incomplete ballot.');for(const [positionId,candidateId] of Object.entries(ballot.choices)){const pos=election.positions.find(x=>String(x.id)===positionId);if(!positions.has(positionId)||!pos.candidates.some(c=>String(c.id)===String(candidateId)))throw new Error('Backup contains a ballot with an invalid candidate reference.');}}const uniqueTokens=new Set(election.tokens);if(uniqueTokens.size!==election.tokens.length||election.tokens.some(token=>typeof token!=='string'||!token.trim()||token.length>200)||new Set(election.usedTokens).size!==election.usedTokens.length||election.usedTokens.some(token=>!election.tokens.includes(token)))throw new Error('Backup contains invalid or duplicate election eligibility codes.');}
     const max=(arr,key)=>arr.reduce((n,x)=>Math.max(n,Number(x[key])||0),0);
     const maxPosition=Math.max(0,...data.elections.flatMap(e=>e.positions.map(x=>Number(x.id)||0))),maxCandidate=Math.max(0,...data.elections.flatMap(e=>e.positions.flatMap(pos=>pos.candidates.map(x=>Number(x.id)||0))));
-    if(data.nextIds.student<=max(data.students,'id')||data.nextIds.programme<=max(data.programmes,'id')||data.nextIds.registration<=max(data.registrations,'id')||data.nextIds.event<=max(data.events,'id')||data.nextIds.user<=max(data.users,'id')||data.nextIds.election<=max(data.elections,'id')||data.nextIds.position<=maxPosition||data.nextIds.candidate<=maxCandidate)throw new Error('Backup ID counters would cause future record ID collisions.');
+    if(data.nextIds.student<=max(data.students,'id')||data.nextIds.programme<=max(data.programmes,'id')||data.nextIds.registration<=max(data.registrations,'id')||data.nextIds.groupTeam<=max(data.groupTeams,'id')||data.nextIds.event<=max(data.events,'id')||data.nextIds.user<=max(data.users,'id')||data.nextIds.election<=max(data.elections,'id')||data.nextIds.position<=maxPosition||data.nextIds.candidate<=maxCandidate)throw new Error('Backup ID counters would cause future record ID collisions.');
     return true;
   }
 
@@ -3477,7 +3569,11 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
         if(key&&isPortalDataStorageKey(key))snapshot.set(key,window.localStorage.getItem(key));
       }
     }catch{throw new Error('Browser storage is unavailable. Backup restore was stopped before changing any data.');}
-    for(const [key,value] of memoryStorage)if(isPortalDataStorageKey(key)&&!snapshot.has(key))snapshot.set(key,value);
+    // Only failed persistent writes/removals override the browser's stale values.
+    // Ordinary cache entries are not authoritative, but an in-session fallback
+    // write must survive a later rollback snapshot.
+    for(const [key,value] of memoryStorage)if(isPortalDataStorageKey(key)&&memoryStorageOverrides.has(key))snapshot.set(key,value);
+    for(const key of memoryStorageRemoved)if(isPortalDataStorageKey(key))snapshot.delete(key);
     return snapshot;
   }
   function clearPortalDataStorage(){
@@ -3491,7 +3587,9 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
   function restorePortalDataStorage(snapshot){
     let ok=clearPortalDataStorage();
     for(const [key,value] of snapshot)if(!storageSet(key,value))ok=false;
-    try{for(const [key,value] of snapshot)if(window.localStorage.getItem(key)!==value)ok=false;}
+    // Verify through the same read path used by the application so a tab that
+    // is already in temporary-session mode can verify its in-memory rollback.
+    try{for(const [key,value] of snapshot)if(storageGet(key)!==value)ok=false;}
     catch{ok=false;}
     return ok;
   }
@@ -3500,8 +3598,8 @@ case 'physical-print-area': state.reportPrint={...state.reportPrint,area:el.data
     const el=event.target;
     if(el.name==='teamCategory'||el.name==='teamHouse'){syncGroupTeamForm(el.closest('[data-form="group-team"]'));return;}
     if(el.name==='pathway'&&el.closest('form[data-form="sahodaya"]'))syncSahodayaForm(el.closest('form'));if(el.matches('[data-picker-class],[data-picker-section]'))syncHierarchicalStudentPicker(el.closest('[data-student-picker]'));if(el.id==='staff-parent-class'||el.id==='staff-parent-section'){const form=el.closest('[data-form="staff"]');if(el.id==='staff-parent-class'){const section=$('#staff-parent-section',form);section.innerHTML='<option value="">Choose section</option>'+selectOptions(sections);section.value='';}syncParentChildPicker(form);}
-    if(el.id==='role-preview'){closeSidebar(false);state.role=el.value;const first=db.users.find(x=>x.role===state.role&&x.active);state.previewUserId=first?.id??null;state.selectedStudentId=state.role==='parent'?(first?.linkedStudentIds?.[0]||first?.linkedStudentId||null):null;state.page='dashboard';state.studentBrowser={classNo:null,section:null,q:'',gender:'',category:'',sort:'name'};state.adminStudentBrowser={classNo:null,section:null,q:'',gender:'',category:'',sort:'name'};state.programmeDetailBrowser={classNo:null,section:null};state.adminRegistrationBrowser={classNo:null,section:null};state.reportBrowser={classNo:null,section:null};render();return;}
-    if(el.id==='preview-account'){state.previewUserId=Number(el.value)||null;state.selectedStudentId=state.role==='parent'?(userByRole('parent')?.linkedStudentIds?.[0]||userByRole('parent')?.linkedStudentId||null):null;render();return;}
+    if(el.matches('select[data-workspace-role]')){closeSidebar(false);state.role=el.value;const first=db.users.find(x=>x.role===state.role&&x.active);state.previewUserId=first?.id??null;state.selectedStudentId=state.role==='parent'?(first?.linkedStudentIds?.[0]||first?.linkedStudentId||null):null;state.page='dashboard';state.studentBrowser={classNo:null,section:null,q:'',gender:'',category:'',sort:'name'};state.adminStudentBrowser={classNo:null,section:null,q:'',gender:'',category:'',sort:'name'};state.programmeDetailBrowser={classNo:null,section:null};state.adminRegistrationBrowser={classNo:null,section:null};state.reportBrowser={classNo:null,section:null};render();return;}
+    if(el.matches('select[data-preview-account]')){state.previewUserId=Number(el.value)||null;state.selectedStudentId=state.role==='parent'?(userByRole('parent')?.linkedStudentIds?.[0]||userByRole('parent')?.linkedStudentId||null):null;closeSidebar(false);render();return;}
     if(el.id==='parent-child-select'){state.selectedStudentId=Number(el.value);render();return;}
     if(el.id==='student-browser-search'){const target=state.page==='admin'?state.adminStudentBrowser:state.studentBrowser;target.q=el.value;return;}
     if(el.id==='calendar-type'){state.calendarType=el.value||'All';render();return;}
