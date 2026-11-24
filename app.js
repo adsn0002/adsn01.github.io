@@ -250,7 +250,6 @@
       if(!localMain) throw new Error('This browser has no saved portal workspace to publish.');
       const parsedMain=JSON.parse(localMain.value);
       if(!parsedMain||typeof parsedMain!=='object'||!parsedMain.settings||!Array.isArray(parsedMain.students)||!Array.isArray(parsedMain.programmes)) throw new Error('The local portal data did not pass the workspace structure check. Nothing was published.');
-      const readUrl=sharedStorage.endpoint+'?select=key,value,updated_at&order=key.asc';
       const rpcUrl=sharedStorage.endpoint.replace('/rest/v1/portal_storage','/rest/v1/rpc/portal_storage_replace_workspace');
       const writeResponse=await fetch(rpcUrl,{method:'POST',headers:sharedStorageHeaders({'Content-Type':'application/json'}),body:JSON.stringify({p_rows:localRows})});
       if(!writeResponse.ok) throw new Error('Supabase rejected the atomic demo workspace publish ('+writeResponse.status+').');
