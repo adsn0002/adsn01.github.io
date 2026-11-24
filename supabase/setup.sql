@@ -73,8 +73,8 @@ begin
   if pg_catalog.jsonb_typeof(p_rows) <> 'array' then
     raise exception 'Workspace payload must be a JSON array';
   end if;
-  if pg_catalog.jsonb_array_length(p_rows) > 1000 then
-    raise exception 'Workspace contains too many keys';
+  if pg_catalog.jsonb_array_length(p_rows) > 10000 then
+    raise exception 'Workspace contains too many keys (maximum 10,000)';
   end if;
 
   for item in select value from pg_catalog.jsonb_array_elements(p_rows)
