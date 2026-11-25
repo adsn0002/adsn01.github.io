@@ -185,7 +185,7 @@ for name,marker in [
     ('no-cache','must-revalidate'),('permissions policy','Permissions-Policy'),
 ]:
     if name=='HSTS intentionally omitted note':
-        check(name,marker in (ROOT/'SECURITY.md').read_text(encoding='utf-8'))
+        check(name, 'HOST = "127.0.0.1"' in server and 'Strict-Transport-Security' not in server)
     else: check(name,marker in server)
 
 # Ensure every published root file and static asset named by the allowlist exists.
